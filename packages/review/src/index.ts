@@ -142,8 +142,11 @@ export class ReviewGate {
       })
     }
 
-    const hasFailure = results.some((result) => result.status === 'fail')
-    const outcome = hasFailure ? 'fail' : context.patchApplied ? 'needs-approval' : 'pass'
+    const failedChecks = new Set(
+      results.filter((result) => result.status === 'fail').map((result) => result.checkId),
+    )
+    const hasRequiredFailure = policy.requiredChecks.some((checkId) => failedChecks.has(checkId))
+    const outcome = hasRequiredFailure ? 'fail' : context.patchApplied ? 'needs-approval' : 'pass'
 
     return {
       generatedAt: new Date().toISOString(),

@@ -89,6 +89,8 @@ describe('@coco/worker', () => {
 
   it('runs a loop job and returns experiment plus review results', async () => {
     const fixture = await createFixtureRepo()
+    const git = simpleGit(fixture.repo.rootPath)
+    let worktreePath: string | undefined
     const job: Job = {
       id: 'job-2',
       type: 'loop',
@@ -101,14 +103,24 @@ describe('@coco/worker', () => {
       },
     }
     try {
+      const beforeHead = (await git.revparse(['HEAD'])).trim()
       const result = await runJob(job, {
         getRepo: async () => fixture.repo,
         appendEvent: async () => undefined,
       })
+      const afterHead = (await git.revparse(['HEAD'])).trim()
 
       expect(result.review).toBeDefined()
+      expect(result.review?.outcome).toBe('needs-approval')
+      expect(result.experiment?.worktreePath).toBeDefined()
+      expect(result.experiment?.branchName).toBeDefined()
+      worktreePath = result.experiment?.worktreePath
+      expect(beforeHead).toBe(afterHead)
       expect(result.summary).toContain('Loop completed')
     } finally {
+      if (worktreePath) {
+        await rm(worktreePath, { recursive: true, force: true })
+      }
       await fixture.cleanup()
     }
   })

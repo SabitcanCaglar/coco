@@ -95,16 +95,21 @@ export async function runJob(job: Job, services: WorkerServices): Promise<JobRes
   })
   const loopSummary = await runKarpathyLoop({
     projectPath: repo.rootPath,
-    rounds: 'rounds' in job.payload ? job.payload.rounds : 1,
+    rounds: 1,
     dryRun: 'dryRun' in job.payload ? Boolean(job.payload.dryRun) : false,
     verbose: false,
     mode: toLoopMode(resolution.provider),
     model: resolution.model,
     ollamaUrl: 'http://127.0.0.1:11434',
+    mergeValidated: false,
   })
   const latestExperiment = loopSummary.results.at(-1)
+  const reviewPath =
+    latestExperiment?.status === 'validated' && latestExperiment.worktreePath
+      ? latestExperiment.worktreePath
+      : repo.rootPath
   const reviewReport = await review.run({
-    projectPath: repo.rootPath,
+    projectPath: reviewPath,
     patchApplied: loopSummary.validated.length > 0,
   })
   await emit(services, job.id, 'review', 'Review gate completed.', 'info', {
@@ -122,6 +127,8 @@ export async function runJob(job: Job, services: WorkerServices): Promise<JobRes
         status: latestExperiment.status,
         durationMs: latestExperiment.duration,
         ...(latestExperiment.commitHash ? { commitHash: latestExperiment.commitHash } : {}),
+        ...(latestExperiment.branchName ? { branchName: latestExperiment.branchName } : {}),
+        ...(latestExperiment.worktreePath ? { worktreePath: latestExperiment.worktreePath } : {}),
         ...(latestExperiment.error ? { error: latestExperiment.error } : {}),
       }
     : undefined

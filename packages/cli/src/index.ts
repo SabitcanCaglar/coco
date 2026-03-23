@@ -41,6 +41,11 @@ async function loadCreateDaemon(): Promise<typeof import('@coco/orchestrator')['
   return orchestrator.createDaemon
 }
 
+async function loadRunJob(): Promise<typeof import('@coco/worker')['runJob']> {
+  const worker = await import('@coco/worker')
+  return worker.runJob
+}
+
 function now(): string {
   return new Date().toISOString()
 }
@@ -158,7 +163,18 @@ export async function runCLI(argv: string[], io: CLIIO = defaultIO): Promise<num
     }
 
     if (group === 'repo' && action === 'add' && subject) {
-      const repo = await detectLocalRepo(subject)
+      const registerResponse = await daemonRequest('/repos', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          path: resolve(subject),
+        }),
+      })
+      const repo = registerResponse?.ok
+        ? ((await registerResponse.json()) as RepoRef)
+        : await detectLocalRepo(subject)
       printOutput(io, jsonMode, repo, `Registered repo ${repo.rootPath} as ${repo.id}`)
       return 0
     }
@@ -219,10 +235,50 @@ export async function runCLI(argv: string[], io: CLIIO = defaultIO): Promise<num
         return 0
       }
 
+      const runJob = await loadRunJob()
+      const result = await runJob(
+        {
+          id: randomUUID(),
+          type: 'loop',
+          repoId: repo.id,
+          requestedAt: now(),
+          status: 'queued',
+          payload: {
+            rounds,
+            ...(provider ? { provider } : {}),
+            ...(model ? { model } : {}),
+          },
+        },
+        {
+          getRepo: async () => ({
+            id: repo.id,
+            rootPath: repo.rootPath,
+            defaultBranch: 'main',
+            languageHints: [],
+            status: 'active',
+            createdAt: now(),
+            updatedAt: now(),
+          }),
+          appendEvent: async () => undefined,
+        },
+      )
+      printOutput(
+        io,
+        jsonMode,
+        result,
+        `Loop completed with review outcome ${result.review?.outcome ?? 'unknown'}.`,
+      )
+      return 0
+    }
+
+    if (group === 'loop' && action === 'inspect' && subject) {
+      const rounds = Number(parseFlag(rest, '--rounds', '1'))
+      const provider = parseFlag(rest, '--provider')
+      const model = parseFlag(rest, '--model')
       const summary = await runKarpathyLoop({
-        projectPath: repo.rootPath,
+        projectPath: resolve(subject),
         rounds,
-        dryRun: false,
+        dryRun: true,
         verbose: false,
         mode: provider === 'null' ? 'deterministic' : provider === 'ollama' ? 'ollama' : 'auto',
         model: model ?? 'qwen3-coder:30b',
@@ -232,7 +288,7 @@ export async function runCLI(argv: string[], io: CLIIO = defaultIO): Promise<num
         io,
         jsonMode,
         summary,
-        `Loop completed with ${summary.validated.length} validated experiments.`,
+        `Loop inspect completed with ${summary.results.length} proposed experiments.`,
       )
       return 0
     }
@@ -252,6 +308,7 @@ export async function runCLI(argv: string[], io: CLIIO = defaultIO): Promise<num
 coco repo add <path> [--json]
 coco doctor run <repo-or-path> [--json]
 coco loop run <repo-or-path> [--rounds N] [--provider null|ollama] [--model NAME] [--json]
+coco loop inspect <repo-path> [--rounds N] [--provider null|ollama] [--model NAME] [--json]
 coco review run <repo-path> [--json]
 coco daemon start`)
     return 1

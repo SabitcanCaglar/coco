@@ -48,6 +48,9 @@ importers:
       '@coco/review':
         specifier: workspace:*
         version: link:../review
+      '@coco/worker':
+        specifier: workspace:*
+        version: link:../worker
       simple-git:
         specifier: ^3.27.0
         version: 3.33.0

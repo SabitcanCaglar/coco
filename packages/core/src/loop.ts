@@ -30,6 +30,8 @@ export interface ExperimentResult {
   status: ExperimentStatus
   durationMs: number
   commitHash?: string
+  branchName?: string
+  worktreePath?: string
   error?: string
   patchResult?: PatchResult
 }

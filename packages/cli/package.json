@@ -25,6 +25,7 @@
     "@coco/loop": "workspace:*",
     "@coco/orchestrator": "workspace:*",
     "@coco/review": "workspace:*",
+    "@coco/worker": "workspace:*",
     "simple-git": "^3.27.0"
   }
 }

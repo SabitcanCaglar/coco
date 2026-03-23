@@ -55,14 +55,14 @@ describe('@coco/review', () => {
     }
   })
 
-  it('fails when the test command fails', async () => {
+  it('keeps optional command failures in needs-approval when required checks pass', async () => {
     const repoPath = await createReviewRepo('node -e "process.exit(1)"')
     try {
       const report = await new ReviewGate().run({
         projectPath: repoPath,
         patchApplied: true,
       })
-      expect(report.outcome).toBe('fail')
+      expect(report.outcome).toBe('needs-approval')
       expect(report.violations.length).toBeGreaterThan(0)
     } finally {
       await rm(repoPath, { recursive: true, force: true })

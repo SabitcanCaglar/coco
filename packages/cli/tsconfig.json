@@ -23,6 +23,9 @@
     },
     {
       "path": "../review"
+    },
+    {
+      "path": "../worker"
     }
   ]
 }

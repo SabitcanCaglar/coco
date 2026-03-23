@@ -88,6 +88,10 @@ describe('@coco/orchestrator', () => {
     const loopJob = (await loopResponse.json()) as { id: string }
     const completedLoop = await waitForJob(port, loopJob.id)
     expect(['completed', 'failed']).toContain(completedLoop.job.status)
+    const worktreePath = completedLoop.result?.experiment?.worktreePath
+    if (typeof worktreePath === 'string') {
+      await rm(worktreePath, { recursive: true, force: true })
+    }
 
     await rm(repoPath, { recursive: true, force: true })
     await rm(dataDir, { recursive: true, force: true })
@@ -97,7 +101,10 @@ describe('@coco/orchestrator', () => {
 async function waitForJob(
   port: number,
   jobId: string,
-): Promise<{ job: { status: string }; result?: Record<string, unknown> }> {
+): Promise<{
+  job: { status: string }
+  result?: { experiment?: { worktreePath?: string } }
+}> {
   for (;;) {
     const response = await fetch(`http://127.0.0.1:${port}/jobs/${jobId}`)
     const payload = (await response.json()) as {

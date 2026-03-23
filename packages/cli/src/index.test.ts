@@ -75,17 +75,32 @@ describe('@coco/cli', () => {
   it('supports loop run in fallback mode with json output', async () => {
     const repoPath = await createFixtureRepo()
     const output: string[] = []
+    const git = simpleGit(repoPath)
+    let worktreePath: string | undefined
     try {
       process.env.COCO_DAEMON_URL = 'http://127.0.0.1:65530'
+      const beforeHead = (await git.revparse(['HEAD'])).trim()
       await expect(
         runCLI(['loop', 'run', repoPath, '--rounds', '1', '--provider', 'null', '--json'], {
           write: (message) => output.push(message),
           error: (message) => output.push(`ERR:${message}`),
         }),
       ).resolves.toBe(0)
-      expect(JSON.parse(output.at(-1) ?? '{}')).toHaveProperty('results')
+      const payload = JSON.parse(output.at(-1) ?? '{}') as {
+        review?: { outcome?: string }
+        experiment?: { worktreePath?: string; branchName?: string }
+      }
+      const afterHead = (await git.revparse(['HEAD'])).trim()
+      worktreePath = payload.experiment?.worktreePath
+      expect(payload.review?.outcome).toBe('needs-approval')
+      expect(payload.experiment?.worktreePath).toBeDefined()
+      expect(payload.experiment?.branchName).toBeDefined()
+      expect(beforeHead).toBe(afterHead)
     } finally {
       process.env.COCO_DAEMON_URL = undefined
+      if (worktreePath) {
+        await rm(worktreePath, { recursive: true, force: true })
+      }
       await rm(repoPath, { recursive: true, force: true })
     }
   })

@@ -88,6 +88,8 @@ export interface ExperimentResult {
   testsPassed: boolean | null // null = no test command found
   status: 'validated' | 'reverted' | 'error'
   commitHash?: string
+  branchName?: string
+  worktreePath?: string
   duration: number
   error?: string
 }
@@ -111,6 +113,7 @@ export interface LoopConfig {
   mode: LLMMode
   model: string
   ollamaUrl: string
+  mergeValidated?: boolean
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -969,7 +972,7 @@ function printScore(score: HealthScore) {
 }
 
 export async function run(config: LoopConfig): Promise<LoopRunSummary> {
-  const { projectPath, rounds, dryRun } = config
+  const { projectPath, rounds, dryRun, mergeValidated = true } = config
   const git = simpleGit(projectPath)
 
   // check if git repo
@@ -1116,7 +1119,7 @@ export async function run(config: LoopConfig): Promise<LoopRunSummary> {
       const testsOk = testsPassed === null || testsPassed
 
       if (improved && testsOk) {
-        // Validated — commit worktree changes, then merge to main
+        // Validated — commit worktree changes, then optionally merge to main
         const worktreeGit = simpleGit(worktreePath)
         await worktreeGit.add('.')
         const commitResult = await worktreeGit.commit(
@@ -1124,17 +1127,21 @@ export async function run(config: LoopConfig): Promise<LoopRunSummary> {
         )
         const commitHash = commitResult.commit?.slice(0, 7) || 'unknown'
 
-        // Merge experiment branch into main
-        await git.raw(['worktree', 'remove', '--force', worktreePath]).catch(() => {})
-        await git
-          .merge([branchName, '--no-ff', '-m', `coco: merge experiment/${expId}`])
-          .catch(async () => {
-            // Merge conflict — try fast-forward
-            await git.merge([branchName]).catch(() => {})
-          })
-        await git.raw(['branch', '-d', branchName]).catch(() => {})
-
-        log('evaluate', `\x1b[32m✓ VALIDATED\x1b[0m — committed as ${commitHash}`)
+        if (mergeValidated) {
+          await git.raw(['worktree', 'remove', '--force', worktreePath]).catch(() => {})
+          await git
+            .merge([branchName, '--no-ff', '-m', `coco: merge experiment/${expId}`])
+            .catch(async () => {
+              await git.merge([branchName]).catch(() => {})
+            })
+          await git.raw(['branch', '-d', branchName]).catch(() => {})
+          log('evaluate', `\x1b[32m✓ VALIDATED\x1b[0m — committed as ${commitHash}`)
+        } else {
+          log(
+            'evaluate',
+            `\x1b[32m✓ VALIDATED\x1b[0m — staged in ${relative(projectPath, worktreePath)} as ${branchName} (${commitHash})`,
+          )
+        }
 
         results.push({
           hypothesisId: expId,
@@ -1145,6 +1152,7 @@ export async function run(config: LoopConfig): Promise<LoopRunSummary> {
           testsPassed,
           status: 'validated',
           commitHash,
+          ...(mergeValidated ? {} : { branchName, worktreePath }),
           duration: Date.now() - roundStart,
         })
       } else {
