@@ -270,6 +270,7 @@ pnpm loop -- . --rounds 10 --mode ollama --model deepseek-r1:14b --verbose
 
 ```bash
 cp .env.example .env
+# edit .env and set a local POSTGRES_PASSWORD before first boot
 docker compose up -d
 ```
 

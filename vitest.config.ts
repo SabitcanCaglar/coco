@@ -9,6 +9,8 @@ export default defineConfig({
       'packages/review',
       'packages/loop',
       'packages/cli',
+      'packages/worker',
+      'packages/orchestrator',
     ],
   },
 })
