@@ -47,6 +47,12 @@ export interface LLMResponse {
   toolCalls?: ToolCall[]
 }
 
+export interface ProviderResolution {
+  provider: string
+  model: string
+  reason: string
+}
+
 export interface LLMProviderContract {
   readonly name: string
   readonly models: ModelReference[]

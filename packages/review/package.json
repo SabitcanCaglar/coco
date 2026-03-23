@@ -17,6 +17,7 @@
     "typecheck": "tsc -b --pretty false"
   },
   "dependencies": {
-    "@coco/core": "workspace:*"
+    "@coco/core": "workspace:*",
+    "simple-git": "^3.27.0"
   }
 }

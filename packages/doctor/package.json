@@ -17,6 +17,7 @@
     "typecheck": "tsc -b --pretty false"
   },
   "dependencies": {
-    "@coco/core": "workspace:*"
+    "@coco/core": "workspace:*",
+    "@coco/loop": "workspace:*"
   }
 }
