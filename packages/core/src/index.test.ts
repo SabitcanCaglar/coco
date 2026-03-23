@@ -1,3 +1,7 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -8,10 +12,15 @@ import {
   LOOP_MODES,
   PATCH_FORMATS,
   PATCH_OPERATIONS,
+  PLUGIN_ENTRY_EXTENSIONS,
+  PLUGIN_KINDS,
   type PluginManifest,
   REVIEW_CHECK_KINDS,
   type RepoRef,
   SCORE_CATEGORIES,
+  checkPluginCompatibility,
+  resolvePluginEntrypoints,
+  validatePluginManifest,
 } from './index.js'
 
 describe('@coco/core', () => {
@@ -23,6 +32,7 @@ describe('@coco/core', () => {
     expect(PATCH_FORMATS).toContain('unified-diff')
     expect(REVIEW_CHECK_KINDS).toContain('test')
     expect(COMMAND_DISPOSITIONS).toContain('ask')
+    expect(PLUGIN_KINDS).toContain('llm-provider')
   })
 
   it('ships a default scoring model and command policy', () => {
@@ -51,5 +61,22 @@ describe('@coco/core', () => {
 
     expect(repo.status).toBe('active')
     expect(plugin.kind).toBe('framework-expert')
+    expect(validatePluginManifest(plugin).valid).toBe(true)
+    expect(checkPluginCompatibility(plugin).supported).toBe(true)
+  })
+
+  it('resolves plugin entrypoints from directories', async () => {
+    const pluginDir = await mkdtemp(join(tmpdir(), 'coco-plugin-dir-'))
+    await writeFile(join(pluginDir, 'doctor-plugin.mjs'), 'export const plugin = {}')
+    await writeFile(join(pluginDir, 'ignore.txt'), 'ignore')
+
+    try {
+      expect(PLUGIN_ENTRY_EXTENSIONS).toContain('.mjs')
+      const entries = await resolvePluginEntrypoints([pluginDir])
+      expect(entries).toHaveLength(1)
+      expect(entries[0]).toContain('doctor-plugin.mjs')
+    } finally {
+      await rm(pluginDir, { recursive: true, force: true })
+    }
   })
 })

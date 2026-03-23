@@ -39,6 +39,9 @@ importers:
       '@coco/doctor':
         specifier: workspace:*
         version: link:../doctor
+      '@coco/llm':
+        specifier: workspace:*
+        version: link:../llm
       '@coco/loop':
         specifier: workspace:*
         version: link:../loop

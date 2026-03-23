@@ -2,6 +2,14 @@ export { COMMAND_DISPOSITIONS, COMMAND_EFFECTS, DEFAULT_COMMAND_POLICY } from '.
 export { DOCTOR_PHASES } from './doctor.js'
 export { LOOP_MODES } from './loop.js'
 export { PATCH_FORMATS, PATCH_OPERATIONS } from './patch.js'
+export {
+  PLUGIN_KINDS,
+  PLUGIN_ENTRY_EXTENSIONS,
+  checkPluginCompatibility,
+  resolvePluginEntrypoints,
+  validatePluginManifest,
+  validatePluginModule,
+} from './plugin.js'
 export type * from './job.js'
 export type * from './plugin.js'
 export type * from './repo.js'

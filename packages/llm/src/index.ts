@@ -1,10 +1,14 @@
+import { pathToFileURL } from 'node:url'
 import type {
+  CocoPluginModule,
   LLMProviderContract,
+  LLMProviderPlugin,
   LLMRequest,
   LLMResponse,
   ModelReference,
   ProviderResolution,
 } from '@coco/core'
+import { resolvePluginEntrypoints, validatePluginModule } from '@coco/core'
 
 const DEFAULT_OLLAMA_URL = 'http://127.0.0.1:11434'
 const DEFAULT_OLLAMA_MODEL = 'qwen3-coder:30b'
@@ -12,6 +16,10 @@ const DEFAULT_OLLAMA_MODEL = 'qwen3-coder:30b'
 export interface ProviderSelection {
   provider?: string
   model?: string
+}
+
+export interface LLMRegistryConfig {
+  pluginPaths?: string[]
 }
 
 const NULL_MODEL: ModelReference = {
@@ -122,13 +130,81 @@ export class AnthropicProvider extends NullProvider {
   override readonly name = 'anthropic'
 }
 
+function builtInProviderPlugins(): LLMProviderPlugin[] {
+  return [
+    {
+      manifest: {
+        name: '@coco/provider-null',
+        version: '0.1.0',
+        kind: 'llm-provider',
+        source: 'builtin',
+        capabilities: ['llm-generate', 'fallback'],
+        description: 'Deterministic null provider.',
+      },
+      provider: new NullProvider(),
+    },
+    {
+      manifest: {
+        name: '@coco/provider-ollama',
+        version: '0.1.0',
+        kind: 'llm-provider',
+        source: 'builtin',
+        capabilities: ['llm-generate', 'local-ollama'],
+        description: 'Local Ollama provider.',
+      },
+      provider: new OllamaProvider(),
+    },
+  ]
+}
+
+export async function loadLLMProviderPlugins(pluginPaths: string[]): Promise<LLMProviderPlugin[]> {
+  const loaded: LLMProviderPlugin[] = []
+  for (const pluginPath of await resolvePluginEntrypoints(pluginPaths)) {
+    const module = (await import(pathToFileURL(pluginPath).href)) as {
+      default?: CocoPluginModule
+      plugin?: CocoPluginModule
+    }
+    const plugin = module.plugin ?? module.default
+    if (!plugin || plugin.manifest.kind !== 'llm-provider') {
+      continue
+    }
+    const validation = validatePluginModule(plugin)
+    if (!validation.valid) {
+      throw new Error(
+        `Invalid LLM provider plugin at ${pluginPath}: ${validation.errors.join(' ')}`,
+      )
+    }
+    loaded.push(plugin as LLMProviderPlugin)
+  }
+  return loaded
+}
+
+export function listLLMPlugins(): LLMProviderPlugin[] {
+  return builtInProviderPlugins()
+}
+
 export class LLMRegistry {
   private readonly providers = new Map<string, LLMProviderContract>()
+  private readonly pluginPaths: string[]
+  private loadedExternalPlugins = false
 
-  constructor(providers: LLMProviderContract[] = [new NullProvider(), new OllamaProvider()]) {
+  constructor(
+    providers: LLMProviderContract[] = builtInProviderPlugins().map((plugin) => plugin.provider),
+    config: LLMRegistryConfig = {},
+  ) {
+    this.pluginPaths = config.pluginPaths ?? []
     for (const provider of providers) {
       this.register(provider)
     }
+  }
+
+  private async ensureExternalPluginsLoaded(): Promise<void> {
+    if (this.loadedExternalPlugins) return
+    const plugins = await loadLLMProviderPlugins(this.pluginPaths)
+    for (const plugin of plugins) {
+      this.register(plugin.provider)
+    }
+    this.loadedExternalPlugins = true
   }
 
   register(provider: LLMProviderContract): void {
@@ -144,6 +220,7 @@ export class LLMRegistry {
   }
 
   async resolve(selection: ProviderSelection = {}): Promise<ProviderResolution> {
+    await this.ensureExternalPluginsLoaded()
     if (selection.provider) {
       const explicit = this.providers.get(selection.provider)
       if (!explicit) {
@@ -180,6 +257,7 @@ export class LLMRegistry {
   }
 
   async generate(request: LLMRequest, selection: ProviderSelection = {}): Promise<LLMResponse> {
+    await this.ensureExternalPluginsLoaded()
     const resolution = await this.resolve(selection)
     const provider = this.providers.get(resolution.provider) ?? this.providers.get('null')
     if (!provider) {

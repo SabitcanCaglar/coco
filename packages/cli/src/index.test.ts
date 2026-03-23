@@ -39,6 +39,75 @@ async function createFixtureRepo(): Promise<string> {
   return repoPath
 }
 
+async function createPluginDirectory(): Promise<string> {
+  const pluginDir = await mkdtemp(join(tmpdir(), 'coco-cli-plugins-'))
+  await writeFile(
+    join(pluginDir, 'doctor-plugin.mjs'),
+    `export const plugin = {
+      manifest: {
+        name: 'external-doctor-plugin',
+        version: '0.1.0',
+        kind: 'framework-expert',
+        capabilities: ['doctor-findings']
+      },
+      expert: {
+        framework: 'external',
+        name: 'External Expert',
+        detect: () => true,
+        find: () => [{
+          id: 'external-finding',
+          phase: 'diagnosis',
+          title: 'External finding',
+          summary: 'Loaded from plugin directory',
+          severity: 'low',
+          tags: ['external'],
+          evidence: [],
+          targetFiles: []
+        }],
+        prescribe: () => []
+      }
+    };`,
+  )
+  await writeFile(
+    join(pluginDir, 'review-plugin.mjs'),
+    `export const plugin = {
+      manifest: {
+        name: 'external-review-plugin',
+        version: '0.1.0',
+        kind: 'review-check',
+        capabilities: ['review-policy']
+      },
+      check: {
+        id: 'external-policy',
+        name: 'External Policy',
+        kind: 'policy',
+        required: false,
+        discover: () => null,
+        run: () => ({ result: { checkId: 'external-policy', status: 'pass', summary: 'External policy passed.' } })
+      }
+    };`,
+  )
+  await writeFile(
+    join(pluginDir, 'llm-plugin.mjs'),
+    `export const plugin = {
+      manifest: {
+        name: 'external-llm-plugin',
+        version: '0.1.0',
+        kind: 'llm-provider',
+        capabilities: ['llm-generate']
+      },
+      provider: {
+        name: 'external-llm',
+        models: [{ provider: 'external-llm', name: 'mock-1', family: 'mock', supportsJson: true, supportsTools: false }],
+        async generate() {
+          return { model: this.models[0], content: 'ok', finishReason: 'stop' };
+        }
+      }
+    };`,
+  )
+  return pluginDir
+}
+
 describe('@coco/cli', () => {
   it('exposes the CLI runtime message', () => {
     expect(cliPackage.name).toBe('@coco/cli')
@@ -101,6 +170,65 @@ describe('@coco/cli', () => {
       if (worktreePath) {
         await rm(worktreePath, { recursive: true, force: true })
       }
+      await rm(repoPath, { recursive: true, force: true })
+    }
+  })
+
+  it('lists and inspects built-in plugins', async () => {
+    const output: string[] = []
+
+    await expect(
+      runCLI(['plugins', 'list', '--json'], {
+        write: (message) => output.push(message),
+        error: (message) => output.push(`ERR:${message}`),
+      }),
+    ).resolves.toBe(0)
+    const plugins = JSON.parse(output.at(-1) ?? '[]') as Array<{ name: string }>
+    expect(plugins.some((plugin) => plugin.name === '@coco/provider-null')).toBe(true)
+
+    output.length = 0
+    await expect(
+      runCLI(['plugins', 'inspect', '@coco/provider-null', '--json'], {
+        write: (message) => output.push(message),
+        error: (message) => output.push(`ERR:${message}`),
+      }),
+    ).resolves.toBe(0)
+    expect(JSON.parse(output.at(-1) ?? '{}')).toMatchObject({ name: '@coco/provider-null' })
+  })
+
+  it('loads external plugins from a plugin directory end to end', async () => {
+    const repoPath = await createFixtureRepo()
+    const pluginDir = await createPluginDirectory()
+    const output: string[] = []
+
+    try {
+      process.env.COCO_DAEMON_URL = 'http://127.0.0.1:65530'
+      process.env.COCO_PLUGIN_PATHS = pluginDir
+
+      await expect(
+        runCLI(['plugins', 'list', '--json'], {
+          write: (message) => output.push(message),
+          error: (message) => output.push(`ERR:${message}`),
+        }),
+      ).resolves.toBe(0)
+      const plugins = JSON.parse(output.at(-1) ?? '[]') as Array<{ name: string }>
+      expect(plugins.some((plugin) => plugin.name === 'external-doctor-plugin')).toBe(true)
+      expect(plugins.some((plugin) => plugin.name === 'external-review-plugin')).toBe(true)
+      expect(plugins.some((plugin) => plugin.name === 'external-llm-plugin')).toBe(true)
+
+      output.length = 0
+      await expect(
+        runCLI(['doctor', 'run', repoPath, '--json'], {
+          write: (message) => output.push(message),
+          error: (message) => output.push(`ERR:${message}`),
+        }),
+      ).resolves.toBe(0)
+      const report = JSON.parse(output.at(-1) ?? '{}') as { findings?: Array<{ title: string }> }
+      expect(report.findings?.some((finding) => finding.title === 'External finding')).toBe(true)
+    } finally {
+      process.env.COCO_DAEMON_URL = undefined
+      process.env.COCO_PLUGIN_PATHS = undefined
+      await rm(pluginDir, { recursive: true, force: true })
       await rm(repoPath, { recursive: true, force: true })
     }
   })

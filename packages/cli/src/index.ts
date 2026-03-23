@@ -46,8 +46,28 @@ async function loadRunJob(): Promise<typeof import('@coco/worker')['runJob']> {
   return worker.runJob
 }
 
+async function loadPluginViews(): Promise<{
+  doctor: typeof import('@coco/doctor')
+  review: typeof import('@coco/review')
+  llm: typeof import('@coco/llm')
+}> {
+  const [doctor, review, llm] = await Promise.all([
+    import('@coco/doctor'),
+    import('@coco/review'),
+    import('@coco/llm'),
+  ])
+  return { doctor, review, llm }
+}
+
 function now(): string {
   return new Date().toISOString()
+}
+
+function getPluginPaths(): string[] {
+  return (process.env.COCO_PLUGIN_PATHS ?? '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean)
 }
 
 async function detectLocalRepo(repoArg: string): Promise<RepoRef> {
@@ -150,7 +170,9 @@ function printOutput(io: CLIIO, jsonMode: boolean, payload: unknown, human: stri
 }
 
 export async function runCLI(argv: string[], io: CLIIO = defaultIO): Promise<number> {
-  const [group, action, subject, ...rest] = argv
+  const [group, action, maybeSubject, ...remaining] = argv
+  const subject = maybeSubject?.startsWith('--') ? undefined : maybeSubject
+  const rest = maybeSubject?.startsWith('--') ? [maybeSubject, ...remaining] : remaining
   const jsonMode = hasFlag(rest, '--json')
 
   try {
@@ -196,7 +218,8 @@ export async function runCLI(argv: string[], io: CLIIO = defaultIO): Promise<num
         return 0
       }
 
-      const runtime = new DoctorRuntime()
+      const pluginPaths = getPluginPaths()
+      const runtime = new DoctorRuntime({ pluginPaths })
       const report = await runtime.examine({
         id: repo.id,
         rootPath: repo.rootPath,
@@ -271,6 +294,50 @@ export async function runCLI(argv: string[], io: CLIIO = defaultIO): Promise<num
       return 0
     }
 
+    if (group === 'plugins' && action === 'list') {
+      const pluginPaths = getPluginPaths()
+      const { doctor, review, llm } = await loadPluginViews()
+      const [doctorExternal, reviewExternal, llmExternal] = await Promise.all([
+        doctor.loadFrameworkExpertPlugins(pluginPaths),
+        review.loadReviewCheckPlugins(pluginPaths),
+        llm.loadLLMProviderPlugins(pluginPaths),
+      ])
+      const plugins = [
+        ...doctor.listDoctorPlugins(),
+        ...review.listReviewPlugins(),
+        ...llm.listLLMPlugins(),
+        ...doctorExternal,
+        ...reviewExternal,
+        ...llmExternal,
+      ].map((plugin) => plugin.manifest)
+      printOutput(io, jsonMode, plugins, `Loaded ${plugins.length} plugins.`)
+      return 0
+    }
+
+    if (group === 'plugins' && action === 'inspect' && subject) {
+      const pluginPaths = getPluginPaths()
+      const { doctor, review, llm } = await loadPluginViews()
+      const [doctorExternal, reviewExternal, llmExternal] = await Promise.all([
+        doctor.loadFrameworkExpertPlugins(pluginPaths),
+        review.loadReviewCheckPlugins(pluginPaths),
+        llm.loadLLMProviderPlugins(pluginPaths),
+      ])
+      const plugins = [
+        ...doctor.listDoctorPlugins(),
+        ...review.listReviewPlugins(),
+        ...llm.listLLMPlugins(),
+        ...doctorExternal,
+        ...reviewExternal,
+        ...llmExternal,
+      ]
+      const plugin = plugins.find((candidate) => candidate.manifest.name === subject)
+      if (!plugin) {
+        throw new Error(`Plugin not found: ${subject}`)
+      }
+      printOutput(io, jsonMode, plugin.manifest, `Plugin ${plugin.manifest.name} loaded.`)
+      return 0
+    }
+
     if (group === 'loop' && action === 'inspect' && subject) {
       const rounds = Number(parseFlag(rest, '--rounds', '1'))
       const provider = parseFlag(rest, '--provider')
@@ -295,7 +362,7 @@ export async function runCLI(argv: string[], io: CLIIO = defaultIO): Promise<num
 
     if (group === 'review' && action === 'run' && subject) {
       const path = resolve(subject)
-      const gate = new ReviewGate()
+      const gate = new ReviewGate({ pluginPaths: getPluginPaths() })
       const report = await gate.run({
         projectPath: path,
         patchApplied: false,
@@ -307,6 +374,8 @@ export async function runCLI(argv: string[], io: CLIIO = defaultIO): Promise<num
     io.write(`Usage:
 coco repo add <path> [--json]
 coco doctor run <repo-or-path> [--json]
+coco plugins list [--json]
+coco plugins inspect <name> [--json]
 coco loop run <repo-or-path> [--rounds N] [--provider null|ollama] [--model NAME] [--json]
 coco loop inspect <repo-path> [--rounds N] [--provider null|ollama] [--model NAME] [--json]
 coco review run <repo-path> [--json]

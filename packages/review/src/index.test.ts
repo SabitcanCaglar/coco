@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { simpleGit } from 'simple-git'
 import { describe, expect, it } from 'vitest'
 
-import { ReviewGate, reviewPackage } from './index.js'
+import { ReviewGate, listReviewPlugins, loadReviewCheckPlugins, reviewPackage } from './index.js'
 
 async function createReviewRepo(testScript = 'node -e "process.exit(0)"'): Promise<string> {
   const repoPath = await mkdtemp(join(tmpdir(), 'coco-review-'))
@@ -39,6 +39,7 @@ describe('@coco/review', () => {
   it('exposes runtime metadata', () => {
     expect(reviewPackage.name).toBe('@coco/review')
     expect(reviewPackage.status).toBe('ready')
+    expect(listReviewPlugins().length).toBeGreaterThan(0)
   })
 
   it('returns needs-approval when patch checks pass', async () => {
@@ -66,6 +67,38 @@ describe('@coco/review', () => {
       expect(report.violations.length).toBeGreaterThan(0)
     } finally {
       await rm(repoPath, { recursive: true, force: true })
+    }
+  })
+
+  it('loads external review check plugins from file paths', async () => {
+    const pluginDir = await mkdtemp(join(tmpdir(), 'coco-review-plugin-'))
+    const pluginPath = join(pluginDir, 'review.mjs')
+    await writeFile(
+      pluginPath,
+      `export const plugin = {
+        manifest: {
+          name: 'external-review-plugin',
+          version: '0.1.0',
+          kind: 'review-check',
+          capabilities: ['review-policy']
+        },
+        check: {
+          id: 'external-policy',
+          name: 'External Policy',
+          kind: 'policy',
+          required: false,
+          discover: () => null,
+          run: () => ({ result: { checkId: 'external-policy', status: 'pass', summary: 'External policy passed.' } })
+        }
+      };`,
+    )
+
+    try {
+      const plugins = await loadReviewCheckPlugins([pluginPath])
+      expect(plugins).toHaveLength(1)
+      expect(plugins[0]?.manifest.name).toBe('external-review-plugin')
+    } finally {
+      await rm(pluginDir, { recursive: true, force: true })
     }
   })
 })

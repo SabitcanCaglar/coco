@@ -1,3 +1,7 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -5,7 +9,9 @@ import {
   LLMRegistry,
   NullProvider,
   OllamaProvider,
+  listLLMPlugins,
   llmPackage,
+  loadLLMProviderPlugins,
 } from './index.js'
 
 describe('@coco/llm', () => {
@@ -20,6 +26,7 @@ describe('@coco/llm', () => {
     expect(new NullProvider().name).toBe('null')
     const registry = new LLMRegistry()
     expect(registry.list()).toEqual(['null', 'ollama'])
+    expect(listLLMPlugins()).toHaveLength(2)
     await expect(registry.resolve({ provider: 'null' })).resolves.toMatchObject({
       provider: 'null',
     })
@@ -43,5 +50,36 @@ describe('@coco/llm', () => {
 
     expect(response.finishReason).toBe('error')
     expect(response.content).toContain('llm-unavailable')
+  })
+
+  it('loads external provider plugins from file paths', async () => {
+    const pluginDir = await mkdtemp(join(tmpdir(), 'coco-llm-plugin-'))
+    const pluginPath = join(pluginDir, 'provider.mjs')
+    await writeFile(
+      pluginPath,
+      `export const plugin = {
+        manifest: {
+          name: 'external-llm-plugin',
+          version: '0.1.0',
+          kind: 'llm-provider',
+          capabilities: ['llm-generate']
+        },
+        provider: {
+          name: 'external',
+          models: [{ provider: 'external', name: 'ext-1', family: 'ext', supportsJson: true, supportsTools: false }],
+          async generate() {
+            return { model: this.models[0], content: 'ok', finishReason: 'stop' };
+          }
+        }
+      };`,
+    )
+
+    try {
+      const plugins = await loadLLMProviderPlugins([pluginPath])
+      expect(plugins).toHaveLength(1)
+      expect(plugins[0]?.provider.name).toBe('external')
+    } finally {
+      await rm(pluginDir, { recursive: true, force: true })
+    }
   })
 })

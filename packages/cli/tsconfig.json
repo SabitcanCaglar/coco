@@ -16,6 +16,9 @@
       "path": "../doctor"
     },
     {
+      "path": "../llm"
+    },
+    {
       "path": "../loop"
     },
     {

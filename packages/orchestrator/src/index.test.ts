@@ -41,7 +41,40 @@ async function createFixtureRepo(): Promise<string> {
   return repoPath
 }
 
+async function createPluginDirectory(): Promise<string> {
+  const pluginDir = await mkdtemp(join(tmpdir(), 'coco-orchestrator-plugins-'))
+  await writeFile(
+    join(pluginDir, 'doctor-plugin.mjs'),
+    `export const plugin = {
+      manifest: {
+        name: 'external-daemon-doctor-plugin',
+        version: '0.1.0',
+        kind: 'framework-expert',
+        capabilities: ['doctor-findings']
+      },
+      expert: {
+        framework: 'daemon-external',
+        name: 'Daemon External Expert',
+        detect: () => true,
+        find: () => [{
+          id: 'daemon-external-finding',
+          phase: 'diagnosis',
+          title: 'Daemon external finding',
+          summary: 'Loaded from daemon plugin directory',
+          severity: 'low',
+          tags: ['external'],
+          evidence: [],
+          targetFiles: []
+        }],
+        prescribe: () => []
+      }
+    };`,
+  )
+  return pluginDir
+}
+
 afterEach(async () => {
+  process.env.COCO_PLUGIN_PATHS = undefined
   await Promise.all(daemons.splice(0).map((daemon) => daemon.stop()))
 })
 
@@ -49,11 +82,13 @@ describe('@coco/orchestrator', () => {
   it('serves health, registers repos, and runs queued jobs', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'coco-orchestrator-data-'))
     const repoPath = await createFixtureRepo()
+    const pluginDir = await createPluginDirectory()
     const daemon = createDaemon({
       port: 0,
       dataDir,
     })
     daemons.push(daemon)
+    process.env.COCO_PLUGIN_PATHS = pluginDir
     await daemon.start()
 
     const address = daemon.server.address()
@@ -79,6 +114,11 @@ describe('@coco/orchestrator', () => {
     const doctorJob = (await doctorResponse.json()) as { id: string }
     const completedDoctor = await waitForJob(port, doctorJob.id)
     expect(completedDoctor.job.status).toBe('completed')
+    expect(
+      completedDoctor.result?.report?.findings?.some(
+        (finding) => finding.title === 'Daemon external finding',
+      ),
+    ).toBe(true)
 
     const loopResponse = await fetch(`http://127.0.0.1:${port}/jobs/loop`, {
       method: 'POST',
@@ -94,7 +134,9 @@ describe('@coco/orchestrator', () => {
     }
 
     await rm(repoPath, { recursive: true, force: true })
+    await rm(pluginDir, { recursive: true, force: true })
     await rm(dataDir, { recursive: true, force: true })
+    process.env.COCO_PLUGIN_PATHS = undefined
   })
 })
 
@@ -103,7 +145,10 @@ async function waitForJob(
   jobId: string,
 ): Promise<{
   job: { status: string }
-  result?: { experiment?: { worktreePath?: string } }
+  result?: {
+    report?: { findings?: Array<{ title: string }> }
+    experiment?: { worktreePath?: string }
+  }
 }> {
   for (;;) {
     const response = await fetch(`http://127.0.0.1:${port}/jobs/${jobId}`)

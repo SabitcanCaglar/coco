@@ -9,6 +9,13 @@ import { ReviewGate } from '@coco/review'
 
 const HEARTBEAT_INTERVAL_MS = 60_000
 
+function getConfiguredPluginPaths(): string[] {
+  return (process.env.COCO_PLUGIN_PATHS ?? '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean)
+}
+
 export interface WorkerServices {
   getRepo(repoId: string): Promise<RepoRef>
   appendEvent(event: Omit<JobEvent, 'id' | 'timestamp'>): Promise<void>
@@ -54,9 +61,10 @@ async function emit(
 
 export async function runJob(job: Job, services: WorkerServices): Promise<JobResult> {
   const repo = await services.getRepo(job.repoId)
-  const doctor = new DoctorRuntime()
-  const review = new ReviewGate()
-  const llm = new LLMRegistry()
+  const pluginPaths = getConfiguredPluginPaths()
+  const doctor = new DoctorRuntime({ pluginPaths })
+  const review = new ReviewGate({ pluginPaths })
+  const llm = new LLMRegistry(undefined, { pluginPaths })
 
   await emit(services, job.id, 'worker', `Starting ${job.type} job for ${repo.rootPath}.`)
 

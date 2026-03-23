@@ -5,7 +5,14 @@ import { join } from 'node:path'
 import { simpleGit } from 'simple-git'
 import { describe, expect, it } from 'vitest'
 
-import { DoctorRuntime, defineFrameworkExpert, doctorPackage, expertRegistry } from './index.js'
+import {
+  DoctorRuntime,
+  defineFrameworkExpert,
+  doctorPackage,
+  expertRegistry,
+  listDoctorPlugins,
+  loadFrameworkExpertPlugins,
+} from './index.js'
 
 async function createFixtureRepo(): Promise<string> {
   const repoPath = await mkdtemp(join(tmpdir(), 'coco-doctor-'))
@@ -61,6 +68,7 @@ describe('@coco/doctor', () => {
   it('exposes scaffold package metadata', () => {
     expect(doctorPackage.name).toBe('@coco/doctor')
     expect(doctorPackage.status).toBe('ready')
+    expect(listDoctorPlugins().length).toBeGreaterThan(0)
   })
 
   it('examines a repo and returns findings plus prescriptions', async () => {
@@ -83,6 +91,37 @@ describe('@coco/doctor', () => {
       expect(report.diagnoses.length).toBeGreaterThan(0)
     } finally {
       await rm(repoPath, { recursive: true, force: true })
+    }
+  })
+
+  it('loads external framework expert plugins from file paths', async () => {
+    const pluginDir = await mkdtemp(join(tmpdir(), 'coco-doctor-plugin-'))
+    const pluginPath = join(pluginDir, 'custom-expert.mjs')
+    await writeFile(
+      pluginPath,
+      `export const plugin = {
+        manifest: {
+          name: 'external-doctor-plugin',
+          version: '0.1.0',
+          kind: 'framework-expert',
+          capabilities: ['doctor-findings']
+        },
+        expert: {
+          framework: 'custom',
+          name: 'Custom Expert',
+          detect: () => true,
+          find: () => [],
+          prescribe: () => []
+        }
+      };`,
+    )
+
+    try {
+      const plugins = await loadFrameworkExpertPlugins([pluginPath])
+      expect(plugins).toHaveLength(1)
+      expect(plugins[0]?.manifest.name).toBe('external-doctor-plugin')
+    } finally {
+      await rm(pluginDir, { recursive: true, force: true })
     }
   })
 })
