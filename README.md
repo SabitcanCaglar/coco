@@ -155,11 +155,12 @@ Three primitives. That's all:
 | Layer | Responsibility | Status |
 |-------|---------------|--------|
 | **Karpathy Loop** | observe → hypothesize → experiment → evaluate | **Working** |
-| **Doctor Engine** | 8-phase examination: triage → vitals → diagnosis → treatment | Planned |
-| **Orchestrator** | Task queue, worker assignment, capacity management | Planned |
-| **Worker** | Single repo / single branch / single worktree | Planned |
-| **LLM Registry** | Ollama / Claude / OpenAI / NullProvider — plug & play | Planned |
-| **Review Gate** | Lint + test + diff review; no merge without approval | Planned |
+| **Core Contracts** | Pure domain types, scoring model, patch schema, command policy | **Working** |
+| **Doctor Engine** | 8-phase examination: triage → vitals → diagnosis → treatment | Scaffolded |
+| **Orchestrator** | Task queue, worker assignment, capacity management | Scaffolded |
+| **Worker** | Single repo / single branch / single worktree | Scaffolded |
+| **LLM Providers** | Ollama / Claude / OpenAI / NullProvider package boundary | Scaffolded |
+| **Review Gate** | Lint + test + diff review; no merge without approval | Scaffolded |
 
 ---
 
@@ -280,11 +281,13 @@ docker compose up -d
 coco/
   packages/
     loop/           Karpathy Loop engine (working)
-    core/           LLM registry, Doctor Engine, types
-    orchestrator/   Task queue, worker management (planned)
-    worker/         Single-project coding agent (planned)
-    review/         Lint, test, diff review gate (planned)
-    cli/            CLI commands (planned)
+    core/           Pure contracts, scoring, patch, and policy types
+    llm/            Provider registry and adapters (scaffolded)
+    doctor/         Doctor engine and framework experts (scaffolded)
+    orchestrator/   Task queue, worker management (scaffolded)
+    worker/         Single-project coding agent (scaffolded)
+    review/         Lint, test, diff review gate (scaffolded)
+    cli/            CLI commands (scaffolded)
   docker/
     compose.yml
     Dockerfile.*
