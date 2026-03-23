@@ -11,6 +11,18 @@
   "references": [
     {
       "path": "../core"
+    },
+    {
+      "path": "../doctor"
+    },
+    {
+      "path": "../loop"
+    },
+    {
+      "path": "../orchestrator"
+    },
+    {
+      "path": "../review"
     }
   ]
 }

@@ -44,6 +44,7 @@ export interface Prescription {
   id: CocoId
   title: string
   summary: string
+  kind: 'advisory' | 'autofix' | 'experiment'
   priority: Priority
   targetFiles: string[]
   patchPlan?: PatchPlan

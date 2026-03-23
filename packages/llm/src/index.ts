@@ -1,48 +1,210 @@
-const STUB_MESSAGE =
-  '@coco/llm is scaffolded as the provider boundary. Concrete adapters will land in a later milestone.'
+import type {
+  LLMProviderContract,
+  LLMRequest,
+  LLMResponse,
+  ModelReference,
+  ProviderResolution,
+} from '@coco/core'
 
-class BaseStubProvider {
-  readonly status = 'stub' as const
+const DEFAULT_OLLAMA_URL = 'http://127.0.0.1:11434'
+const DEFAULT_OLLAMA_MODEL = 'qwen3-coder:30b'
 
-  constructor(readonly name: string) {}
+export interface ProviderSelection {
+  provider?: string
+  model?: string
+}
 
-  async generate(): Promise<never> {
-    throw new Error(STUB_MESSAGE)
+const NULL_MODEL: ModelReference = {
+  provider: 'null',
+  name: 'deterministic-fallback',
+  family: 'null',
+  supportsJson: true,
+  supportsTools: false,
+}
+
+export class NullProvider implements LLMProviderContract {
+  readonly name: string = 'null'
+  readonly models = [NULL_MODEL]
+
+  async generate(request: LLMRequest): Promise<LLMResponse> {
+    const reason =
+      request.responseFormat === 'json' ? '{"reason":"llm-unavailable"}' : 'LLM unavailable'
+    return {
+      model: NULL_MODEL,
+      content: reason,
+      finishReason: 'error',
+      usage: {
+        input: 0,
+        output: 0,
+        total: 0,
+      },
+    }
   }
+}
+
+export class OllamaProvider implements LLMProviderContract {
+  readonly name = 'ollama'
+  readonly models: ModelReference[]
+
+  constructor(
+    private readonly baseUrl = DEFAULT_OLLAMA_URL,
+    defaultModel = DEFAULT_OLLAMA_MODEL,
+  ) {
+    this.models = [
+      {
+        provider: 'ollama',
+        name: defaultModel,
+        family: defaultModel.split(':')[0] ?? defaultModel,
+        supportsJson: true,
+        supportsTools: false,
+      },
+    ]
+  }
+
+  async isHealthy(): Promise<boolean> {
+    try {
+      const response = await fetch(`${this.baseUrl}/api/tags`, {
+        signal: AbortSignal.timeout(1_500),
+      })
+      return response.ok
+    } catch {
+      return false
+    }
+  }
+
+  async generate(request: LLMRequest): Promise<LLMResponse> {
+    const model = this.models[0] ?? NULL_MODEL
+    const prompt = renderPrompt(request)
+    const response = await fetch(`${this.baseUrl}/api/generate`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: model.name,
+        prompt,
+        stream: false,
+        format: request.responseFormat === 'json' ? 'json' : undefined,
+        options: {
+          temperature: request.temperature ?? 0.2,
+          num_predict: request.maxOutputTokens,
+        },
+      }),
+    })
+
+    if (!response.ok) {
+      return {
+        model,
+        content: `Ollama request failed with status ${response.status}`,
+        finishReason: 'error',
+      }
+    }
+
+    const payload = (await response.json()) as {
+      response?: string
+      eval_count?: number
+      prompt_eval_count?: number
+    }
+    return {
+      model,
+      content: payload.response ?? '',
+      finishReason: 'stop',
+      usage: {
+        input: payload.prompt_eval_count ?? 0,
+        output: payload.eval_count ?? 0,
+        total: (payload.prompt_eval_count ?? 0) + (payload.eval_count ?? 0),
+      },
+    }
+  }
+}
+
+export class AnthropicProvider extends NullProvider {
+  override readonly name = 'anthropic'
 }
 
 export class LLMRegistry {
-  readonly status = 'stub' as const
+  private readonly providers = new Map<string, LLMProviderContract>()
 
-  register(): never {
-    throw new Error(STUB_MESSAGE)
+  constructor(providers: LLMProviderContract[] = [new NullProvider(), new OllamaProvider()]) {
+    for (const provider of providers) {
+      this.register(provider)
+    }
+  }
+
+  register(provider: LLMProviderContract): void {
+    this.providers.set(provider.name, provider)
   }
 
   list(): string[] {
-    return []
+    return [...this.providers.keys()].sort()
+  }
+
+  get(name: string): LLMProviderContract | undefined {
+    return this.providers.get(name)
+  }
+
+  async resolve(selection: ProviderSelection = {}): Promise<ProviderResolution> {
+    if (selection.provider) {
+      const explicit = this.providers.get(selection.provider)
+      if (!explicit) {
+        return {
+          provider: 'null',
+          model: NULL_MODEL.name,
+          reason: `Requested provider "${selection.provider}" is unavailable; falling back to null.`,
+        }
+      }
+
+      const model = selection.model ?? explicit.models[0]?.name ?? NULL_MODEL.name
+      return {
+        provider: explicit.name,
+        model,
+        reason: `Using explicitly requested provider "${explicit.name}".`,
+      }
+    }
+
+    const ollama = this.providers.get('ollama')
+    if (ollama instanceof OllamaProvider && (await ollama.isHealthy())) {
+      return {
+        provider: ollama.name,
+        model: selection.model ?? ollama.models[0]?.name ?? DEFAULT_OLLAMA_MODEL,
+        reason: 'Detected a healthy local Ollama instance.',
+      }
+    }
+
+    return {
+      provider: 'null',
+      model: NULL_MODEL.name,
+      reason:
+        'Falling back to the null provider because no explicit or healthy local provider was available.',
+    }
+  }
+
+  async generate(request: LLMRequest, selection: ProviderSelection = {}): Promise<LLMResponse> {
+    const resolution = await this.resolve(selection)
+    const provider = this.providers.get(resolution.provider) ?? this.providers.get('null')
+    if (!provider) {
+      throw new Error('No LLM providers are registered.')
+    }
+
+    return provider.generate(request)
   }
 }
 
-export class OllamaProvider extends BaseStubProvider {
-  constructor() {
-    super('ollama')
+function renderPrompt(request: LLMRequest): string {
+  const sections: string[] = []
+  if (request.systemPrompt) {
+    sections.push(`SYSTEM:\n${request.systemPrompt}`)
   }
-}
 
-export class AnthropicProvider extends BaseStubProvider {
-  constructor() {
-    super('anthropic')
+  for (const message of request.messages) {
+    sections.push(`${message.role.toUpperCase()}:\n${message.content}`)
   }
-}
 
-export class NullProvider extends BaseStubProvider {
-  constructor() {
-    super('null')
-  }
+  return sections.join('\n\n')
 }
 
 export const llmPackage = {
   name: '@coco/llm',
-  status: 'stub',
-  message: STUB_MESSAGE,
+  status: 'ready',
+  message: 'Local-first LLM registry with null and Ollama providers.',
 } as const

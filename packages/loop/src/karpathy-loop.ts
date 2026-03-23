@@ -20,13 +20,15 @@ import { randomBytes } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { readFile, readdir, writeFile } from 'node:fs/promises'
 import { basename, extname, join, relative } from 'node:path'
+import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { simpleGit } from 'simple-git'
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // TYPES
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-interface HealthScore {
+export interface HealthScore {
   overall: number // 0-100
   security: number
   maintainability: number
@@ -34,7 +36,7 @@ interface HealthScore {
   size: number
 }
 
-interface Observation {
+export interface Observation {
   score: HealthScore
   metrics: {
     totalFiles: number
@@ -51,7 +53,7 @@ interface Observation {
   fileDetails: FileDetail[]
 }
 
-interface FileDetail {
+export interface FileDetail {
   path: string
   relativePath: string
   lines: number
@@ -62,7 +64,7 @@ interface FileDetail {
   deepNesting: number
 }
 
-interface Hypothesis {
+export interface Hypothesis {
   id: string
   key: string // deduplication key — prevents retrying the same hypothesis
   description: string
@@ -72,12 +74,12 @@ interface Hypothesis {
   patchFn: (worktreePath: string) => Promise<PatchResult>
 }
 
-interface PatchResult {
+export interface PatchResult {
   filesModified: number
   description: string
 }
 
-interface ExperimentResult {
+export interface ExperimentResult {
   hypothesisId: string
   hypothesis: string
   beforeScore: number
@@ -90,9 +92,18 @@ interface ExperimentResult {
   error?: string
 }
 
-type LLMMode = 'auto' | 'deterministic' | 'ollama' | 'openclaw'
+export interface LoopRunSummary {
+  initialObservation: Observation
+  finalObservation: Observation
+  results: ExperimentResult[]
+  validated: ExperimentResult[]
+  reverted: ExperimentResult[]
+  errors: ExperimentResult[]
+}
 
-interface LoopConfig {
+export type LLMMode = 'auto' | 'deterministic' | 'ollama' | 'openclaw'
+
+export interface LoopConfig {
   projectPath: string
   rounds: number
   dryRun: boolean
@@ -283,7 +294,7 @@ function calculateHealthScore(metrics: Observation['metrics'], totalFiles: numbe
   }
 }
 
-async function observe(projectPath: string): Promise<Observation> {
+export async function observe(projectPath: string): Promise<Observation> {
   const files = await walkSourceFiles(projectPath)
   const fileDetails = await Promise.all(files.map((f) => analyzeFile(f, projectPath)))
 
@@ -862,7 +873,7 @@ async function detectLLMMode(
 // EXPERIMENT — isolated experiment in git worktree
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-function detectTestCommand(projectPath: string): string | null {
+export function detectTestCommand(projectPath: string): string | null {
   try {
     const pkgPath = join(projectPath, 'package.json')
     const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as { scripts?: Record<string, string> }
@@ -901,7 +912,7 @@ function detectTestCommand(projectPath: string): string | null {
   return null
 }
 
-function runTests(projectPath: string, testCommand: string): boolean {
+export function runTests(projectPath: string, testCommand: string): boolean {
   try {
     execSync(testCommand, {
       cwd: projectPath,
@@ -957,7 +968,7 @@ function printScore(score: HealthScore) {
   console.log(`            size:            ${bar(score.size)}`)
 }
 
-async function run(config: LoopConfig) {
+export async function run(config: LoopConfig): Promise<LoopRunSummary> {
   const { projectPath, rounds, dryRun } = config
   const git = simpleGit(projectPath)
 
@@ -1008,7 +1019,14 @@ async function run(config: LoopConfig) {
     }
     console.log()
     console.log('  \x1b[33mDry run complete. No changes were made.\x1b[0m')
-    return
+    return {
+      initialObservation: initialObs,
+      finalObservation: initialObs,
+      results: [],
+      validated: [],
+      reverted: [],
+      errors: [],
+    }
   }
 
   // detect test command
@@ -1196,6 +1214,15 @@ async function run(config: LoopConfig) {
     console.log(`    Commits:    ${validated.map((r) => r.commitHash).join(', ')}`)
   }
   console.log()
+
+  return {
+    initialObservation: initialObs,
+    finalObservation: finalObs,
+    results,
+    validated,
+    reverted,
+    errors,
+  }
 }
 
 function formatDuration(ms: number): string {
@@ -1209,7 +1236,7 @@ function formatDuration(ms: number): string {
 // CLI
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-function parseArgs(args: string[]): LoopConfig {
+export function parseArgs(args: string[]): LoopConfig {
   const positional: string[] = []
   let rounds = 5
   let dryRun = false
@@ -1289,15 +1316,20 @@ process.on('SIGINT', () => {
   console.log('\n  \x1b[33mGraceful shutdown... finishing current experiment.\x1b[0m')
 })
 
-// Entry point
-const config = parseArgs(process.argv.slice(2))
+function isDirectExecution(): boolean {
+  const entry = process.argv[1]
+  return entry ? import.meta.url === pathToFileURL(resolve(entry)).href : false
+}
 
-// resolve to absolute path
-const resolvedPath = config.projectPath.startsWith('/')
-  ? config.projectPath
-  : join(process.cwd(), config.projectPath)
+if (isDirectExecution()) {
+  const config = parseArgs(process.argv.slice(2))
+  const resolvedPath = config.projectPath.startsWith('/')
+    ? config.projectPath
+    : join(process.cwd(), config.projectPath)
 
-run({ ...config, projectPath: resolvedPath }).catch((err) => {
-  console.error('\x1b[31mFatal error:\x1b[0m', err.message)
-  process.exit(1)
-})
+  run({ ...config, projectPath: resolvedPath }).catch((err) => {
+    const message = err instanceof Error ? err.message : String(err)
+    console.error('\x1b[31mFatal error:\x1b[0m', message)
+    process.exit(1)
+  })
+}

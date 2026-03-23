@@ -36,6 +36,21 @@ importers:
       '@coco/core':
         specifier: workspace:*
         version: link:../core
+      '@coco/doctor':
+        specifier: workspace:*
+        version: link:../doctor
+      '@coco/loop':
+        specifier: workspace:*
+        version: link:../loop
+      '@coco/orchestrator':
+        specifier: workspace:*
+        version: link:../orchestrator
+      '@coco/review':
+        specifier: workspace:*
+        version: link:../review
+      simple-git:
+        specifier: ^3.27.0
+        version: 3.33.0
 
   packages/core: {}
 
@@ -44,6 +59,9 @@ importers:
       '@coco/core':
         specifier: workspace:*
         version: link:../core
+      '@coco/loop':
+        specifier: workspace:*
+        version: link:../loop
 
   packages/llm:
     dependencies:
@@ -69,18 +87,39 @@ importers:
       '@coco/core':
         specifier: workspace:*
         version: link:../core
+      '@coco/worker':
+        specifier: workspace:*
+        version: link:../worker
+      simple-git:
+        specifier: ^3.27.0
+        version: 3.33.0
 
   packages/review:
     dependencies:
       '@coco/core':
         specifier: workspace:*
         version: link:../core
+      simple-git:
+        specifier: ^3.27.0
+        version: 3.33.0
 
   packages/worker:
     dependencies:
       '@coco/core':
         specifier: workspace:*
         version: link:../core
+      '@coco/doctor':
+        specifier: workspace:*
+        version: link:../doctor
+      '@coco/llm':
+        specifier: workspace:*
+        version: link:../llm
+      '@coco/loop':
+        specifier: workspace:*
+        version: link:../loop
+      '@coco/review':
+        specifier: workspace:*
+        version: link:../review
 
 packages:
 

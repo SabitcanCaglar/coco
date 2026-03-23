@@ -6,6 +6,17 @@ export type ReviewCheckKind = (typeof REVIEW_CHECK_KINDS)[number]
 
 export type ReviewOutcome = 'pass' | 'fail' | 'needs-approval'
 
+export interface ReviewCommandDiscovery {
+  build: string | null
+  test: string | null
+}
+
+export interface ReviewPolicy {
+  requiredChecks: ReviewCheckKind[]
+  optionalChecks: ReviewCheckKind[]
+  discovery: ReviewCommandDiscovery
+}
+
 export interface ReviewCheck {
   id: CocoId
   name: string
@@ -32,6 +43,7 @@ export interface ReviewViolation {
 export interface ReviewReport {
   generatedAt: ISO8601Timestamp
   outcome: ReviewOutcome
+  policy?: ReviewPolicy
   results: ReviewCheckResult[]
   violations: ReviewViolation[]
 }
