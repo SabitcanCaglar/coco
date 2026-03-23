@@ -17,27 +17,123 @@
     ╚═════╝ ╚═════╝  ╚═════╝ ╚═════╝
 ```
 
-> **coco** — kedim coco'nun adını taşıyan, Linus Torvalds felsefesiyle inşa edilmiş,
-> kendi kendini iyileştiren çok-proje mühendislik orkestratörü.
+> **Self-improving code health for every project. Free as in freedom.**
 
 ---
 
-## Felsefe
+## Manifesto
 
 > "Talk is cheap. Show me the code." — Linus Torvalds
 
-Gösterişli framework yerine sağlam boru hattı.
-Tek dev makinede, izole `git worktree`'lerde paralel çalışan coding agent'lar.
-Her karar ölçülebilir, her değişiklik test edilmiş, hiçbir merge review'suz geçmez.
+We believe the tools that shape software should be **free, open, and owned by everyone**.
+
+Not free as in "free trial." Free as in **freedom** — the freedom to run, study, modify, and share.
+The same freedom Linus gave the world with Linux. The same freedom that built the internet,
+Git, GCC, and every tool we rely on without thinking.
+
+**coco** exists because:
+
+1. **Code health is a right, not a premium feature.** Every solo developer and open source
+   maintainer deserves the same code quality tools that billion-dollar companies hoard behind
+   enterprise paywalls. coco runs on your machine, with your models, for $0.
+
+2. **LLMs should serve the developer, not the vendor.** coco works without any API key.
+   Deterministic analysis first. Local LLMs (Ollama) when you want smarter hypotheses.
+   Cloud APIs only if *you* choose to. No telemetry. No lock-in. Your code never leaves
+   your machine unless you decide it should.
+
+3. **Simplicity is not a compromise — it's the architecture.** A pipe is better than a
+   framework. A function is better than a class hierarchy. A working prototype is better
+   than a perfect design document. We follow the Unix way: do one thing well, compose
+   with others, fail loudly.
+
+4. **Every change must prove itself.** No commit enters the codebase on faith. coco's
+   Karpathy Loop — observe, hypothesize, experiment, evaluate — means every improvement
+   is measured, tested in isolation, and only merged when the numbers go up. If a change
+   doesn't improve the score, it gets reverted. No exceptions.
+
+5. **Open source is not a license — it's a pact.** We ship everything: the good code,
+   the ugly code, the failed experiments. We review in public. We discuss in public.
+   We build in public. Because the best code comes from the most eyes.
+
+```
+The cathedral model says: plan everything, hide the mess, reveal the masterpiece.
+The bazaar model says: ship early, ship often, let the community shape the code.
+We choose the bazaar — every single time.
+
+                                            — coco contributors
+```
+
+This is software built by developers, for developers, in the spirit of the tools
+we all depend on. If you believe code health should be free, you're in the right place.
 
 ---
 
-## Mimari
+## What is coco?
+
+A **self-improving code health engine** that examines your projects like a doctor examines
+a patient. Named after my cat. Built with the Karpathy Loop — the same
+observe→hypothesize→experiment→evaluate cycle that drives autonomous research — adapted
+for software engineering.
+
+Three primitives. That's all:
+- **Editable Asset** — your project code, isolated in a git worktree
+- **Scalar Metric** — health score 0-100, deterministic, reproducible
+- **Time-boxed Cycle** — each experiment runs, proves itself, or gets reverted
+
+---
+
+## Architecture
+
+### The Karpathy Loop (Core Engine — Working Now)
+
+```
+    ┌──────────┐
+    │ OBSERVE  │◄──────────────────────────────┐
+    │ metrics  │                               │
+    └────┬─────┘                               │
+         │                                     │
+    ┌────▼──────────┐                          │
+    │  HYPOTHESIZE  │                          │
+    │  ┌──────────┐ │                          │
+    │  │ Rules    │ │  Mode 0: deterministic   │
+    │  │ Ollama   │ │  Mode 1: local LLM       │
+    │  │ OpenClaw │ │  Mode 2: agent bridge    │
+    │  └──────────┘ │                          │
+    └────┬──────────┘                          │
+         │                                     │
+    ┌────▼──────────┐                          │
+    │  EXPERIMENT   │                          │
+    │  git worktree │  isolated branch         │
+    │  apply patch  │  run tests               │
+    └────┬──────────┘                          │
+         │                                     │
+    ┌────▼──────────┐    score improved        │
+    │   EVALUATE    │────& tests pass──────────┘
+    │  compare      │         │
+    │  scores       │    score dropped
+    └───────────────┘    or tests fail
+                              │
+                         ┌────▼────┐
+                         │ REVERT  │
+                         └─────────┘
+```
+
+### LLM Modes — All Free
+
+| Mode | Engine | How it works | Cost |
+|------|--------|-------------|------|
+| **deterministic** | `RuleBasedEngine` | 4 built-in rules (console.log, empty catch, TODO, magic numbers) | $0, no internet |
+| **ollama** | `OllamaEngine` | Local LLM analyzes code, generates project-specific hypotheses | $0, local GPU |
+| **openclaw** | `OpenClawEngine` | OpenClaw coding-agent skill → Ollama backend | $0, local GPU |
+| **auto** (default) | auto-detect | Checks if Ollama is running → uses it, otherwise falls back to deterministic | $0 |
+
+### Full System (Roadmap)
 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                    ORCHESTRATOR                         │
-│   görev seç → önceliklendir → hangi worker → dispatch  │
+│   task select → prioritize → assign worker → dispatch   │
 └────────────────────┬────────────────────────────────────┘
                      │
         ┌────────────┼────────────┐
@@ -56,161 +152,169 @@ Her karar ölçülebilir, her değişiklik test edilmiş, hiçbir merge review's
               └─────────────┘
 ```
 
-### Katmanlar
-
-| Katman | Sorumluluk |
-|--------|-----------|
-| **Orchestrator** | Görev kuyruğu, worker atama, kapasite yönetimi |
-| **Worker** | Tek repo / tek branch / tek worktree içinde çalışır |
-| **Doctor Engine** | Her projeyi triaj → vitaller → teşhis → tedavi hattıyla analiz eder |
-| **LLM Registry** | Ollama / Claude / OpenAI / NullProvider — plug & play |
-| **Review Gate** | Lint + test + diff review; onaysız merge yok |
+| Layer | Responsibility | Status |
+|-------|---------------|--------|
+| **Karpathy Loop** | observe → hypothesize → experiment → evaluate | **Working** |
+| **Doctor Engine** | 8-phase examination: triage → vitals → diagnosis → treatment | Planned |
+| **Orchestrator** | Task queue, worker assignment, capacity management | Planned |
+| **Worker** | Single repo / single branch / single worktree | Planned |
+| **LLM Registry** | Ollama / Claude / OpenAI / NullProvider — plug & play | Planned |
+| **Review Gate** | Lint + test + diff review; no merge without approval | Planned |
 
 ---
 
-## Doctor Engine — "Her Projeyi Handle Eden Sistem"
+## Doctor Engine (Roadmap)
 
-Gerçek doktor metaforuyla çalışır:
+Every project gets examined like a patient:
 
 ```
-1. TRIAJ        → Ne tür proje? Acil sorun var mı?
-2. VITALLER     → Sayısal sağlık metrikleri
-3. ANAMNEZ      → Git geçmişi, hotspot analizi
-4. MUAYENE      → Framework-spesifik uzman kontrolleri
-5. LAB          → Semgrep, complexity, dependency graph
-6. TEŞHİS       → Bulgulardan hastalık çıkarma
-7. TEDAVİ       → Önceliklendirilmiş reçete + ADR üretme
-8. TAKİP        → Tedavi işe yaradı mı?
+1. TRIAGE       → What kind of project? Any emergencies?
+2. VITALS       → Numerical health metrics
+3. HISTORY      → Git history, hotspot analysis
+4. EXAMINATION  → Framework-specific expert checks
+5. LAB          → Static analysis, complexity, dependency graph
+6. DIAGNOSIS    → Derive conditions from findings
+7. TREATMENT    → Prioritized prescription + ADR generation
+8. FOLLOW-UP    → Did the treatment work?
 ```
 
-Desteklenen framework uzmanları: Next.js, Supabase, Prisma, Drizzle,
-Express/Hono/Fastify, Django, Docker, Go, Rust, Rails, Laravel, Flutter (plugin).
+Framework experts (plugin system): Next.js, Supabase, Prisma, Drizzle,
+Express/Hono/Fastify, Django, Docker, Go, Rust, Rails, Laravel, Flutter.
 
 ---
 
 ## LLM Provider
 
 ```
-provider: "auto"   →   API key varsa → kullan
-                        Ollama varsa  → kullan
-                        Hiçbiri yoksa → NullProvider (deterministik mod)
+mode: "auto"  →  Ollama running?  → use local LLM (FREE)
+                  No Ollama?       → deterministic mode (FREE, no LLM)
+                  API key set?     → optional cloud upgrade
 ```
 
-LLM olmadan tüm AST analizi, Semgrep, complexity ve graph taraması çalışır.
-LLM sadece açıklama üretme ve ADR yazma için gereklidir.
+**Everything works without an LLM.** Static analysis, metrics, health scoring — all deterministic.
+LLM enhances hypothesis generation with project-specific suggestions.
 
 ```bash
-# Ollama (local, ücretsiz)
-ollama pull deepseek-coder-v2:16b
-ollama pull nomic-embed-text
+# Recommended: Ollama (local, free, private)
+ollama pull qwen3-coder:30b      # Best local coding model (Apache 2.0)
+ollama pull nomic-embed-text     # Embeddings (optional)
 
-# veya API key
+# Optional: Cloud API (not required)
 export ANTHROPIC_API_KEY=...
 export OPENAI_API_KEY=...
 ```
 
 ---
 
-## Kurulum
-
-### Docker ile (önerilen)
+## Getting Started
 
 ```bash
 git clone https://github.com/canfamily/coco
 cd coco
+pnpm install
+```
+
+### Karpathy Loop (Working Now)
+
+```bash
+# Preview what coco would do (no changes)
+pnpm loop -- . --dry-run
+
+# Run 5 improvement rounds (deterministic, no LLM)
+pnpm loop -- . --mode deterministic
+
+# Run with local LLM (requires Ollama)
+pnpm loop -- . --mode ollama --model qwen3-coder:30b
+
+# Auto-detect best available mode
+pnpm loop -- .
+
+# Full options
+pnpm loop -- . --rounds 10 --mode ollama --model deepseek-r1:14b --verbose
+```
+
+### Example Output
+
+```
+  COCO Karpathy Loop v0.1
+  Target: /path/to/your/project
+  LLM: qwen3-coder:30b (Ollama, local, FREE)
+  ━━━━━━━━━━━━━━━━━━━━━━━━
+
+  [observe] Initial health score: 78/100
+            security:        ████████████████████ 100
+            maintainability: ██████████░░░░░░░░░░ 32
+            reliability:     ████████████████████ 100
+            size:            ██████████████████░░ 90
+
+  [round 1/3]
+    [hypothesize] Analyzing karpathy-loop.ts with LLM...
+    [hypothesize] "Extract ANSI color codes into a reusable object" → expected +8 maintainability
+    [experiment]  worktree: ../coco-exp-a3f2 | branch: experiment/a3f2
+    [patch]       Modified 1 file (18 lines changed, within safety limits)
+    [test]        npm test → PASS
+    [re-audit]    New score: 82/100 (+4)
+    [evaluate]    ✓ VALIDATED — committed as a3f2e91
+
+  ━━━━━━━━━━━━━━━━━━━━━━━━
+  SUMMARY
+    Rounds:     3
+    Validated:  2 (67%)
+    Reverted:   1
+    Score:      78 → 85 (+7)
+    Commits:    a3f2e91, b7c1d04
+```
+
+### Docker (Full Stack — Roadmap)
+
+```bash
 cp .env.example .env
 docker compose up -d
 ```
 
-### Local
-
-```bash
-pnpm install
-pnpm build
-pnpm dev
-```
-
 ---
 
-## Kullanım
-
-```bash
-# Projeyi muayene et
-npx coco audit /path/to/your/project
-
-# Tüm kayıtlı projeleri tara
-npx coco audit --all
-
-# Spesifik uzman çalıştır
-npx coco audit --expert nextjs /path/to/project
-
-# Worker başlat
-npx coco worker start --project my-saas
-
-# Orchestrator dashboard
-npx coco dashboard
-```
-
-### Örnek çıktı
-
-```
-  COCO — Architectural Health Examination
-  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-  TRIAJ    Next.js 14 + Prisma + Supabase
-  VITALLER Files: 127 | Complexity avg: 4.2 | Tests: 0.09 ratio
-  SONUC    Score: 34/100 (D) — 5 condition, 2 critical
-
-  ONCELIK 1  Exposed credentials in .env        30 min
-  ONCELIK 2  service_role key in client code     1 hour
-  ONCELIK 3  God Route (847 lines)               4 hours
-```
-
----
-
-## Proje Yapısı
+## Project Structure
 
 ```
 coco/
   packages/
-    core/           LLM registry, Doctor Engine, AST parsing
-    orchestrator/   Görev kuyruğu, worker yönetimi
-    worker/         Tek-proje coding agent session
-    review/         Lint, test, diff review gate
-    cli/            npx coco komutları
+    loop/           Karpathy Loop engine (working)
+    core/           LLM registry, Doctor Engine, types
+    orchestrator/   Task queue, worker management (planned)
+    worker/         Single-project coding agent (planned)
+    review/         Lint, test, diff review gate (planned)
+    cli/            CLI commands (planned)
   docker/
     compose.yml
-    Dockerfile.orchestrator
-    Dockerfile.worker
-  docs/
-    adr/            Architecture Decision Records
-    experts/        Framework uzman dokümantasyonu
-  harden.config.json
+    Dockerfile.*
+    init.sql
 ```
 
 ---
 
-## Katkı
+## Contributing
 
-1. Fork → feature branch → küçük patch'ler
-2. Her patch sonrası test zorunlu
-3. PR özeti olmadan merge yok
-4. Review agent onaylamadan merge olmaz
+1. Fork → feature branch → small patches
+2. Every patch must pass tests
+3. No merge without PR summary
+4. No merge without review
 
 ```bash
 git worktree add ../coco-feature-x feature/x
 cd ../coco-feature-x
-# ... çalış ...
+# ... work ...
 pnpm test
 gh pr create
 ```
 
 ---
 
-## Lisans
+## License
 
-MIT — Açık kaynak. Linus felsefesiyle: kodu konuş, taahhüdü gör.
+MIT — Free and open source. In the spirit of Linux, Git, and every tool that
+made software engineering possible.
 
 ---
 
-*coco — kedimin adı, sistemin ruhu.*
+*coco — named after my cat, the soul of the system.*

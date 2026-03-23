@@ -2,9 +2,9 @@ import type { LLMProvider, LLMCapabilities, HealthCheckResult } from '../provide
 import type { ZodSchema } from 'zod'
 
 /**
- * NullProvider — LLM olmadan sistem çalışmaya devam eder.
- * Tüm deterministik analiz (AST, graph, Semgrep) çalışır.
- * Sadece açıklama üretme ve ADR yazma devre dışı kalır.
+ * NullProvider — system continues to work without an LLM.
+ * All deterministic analysis (AST, graph, static analysis) works.
+ * Only explanation generation and ADR writing are disabled.
  */
 export class NullProvider implements LLMProvider {
   readonly id = 'null'

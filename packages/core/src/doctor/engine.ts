@@ -13,10 +13,10 @@ import type {
 import type { LLMRegistry } from '../llm/registry.js'
 
 /**
- * DoctorEngine — her projeyi sistematik 8 fazlı süreçle muayene eder.
+ * DoctorEngine — examines every project through a systematic 8-phase process.
  *
- * Linus felsefesiyle: deterministik analiz önce gelir, LLM opsiyonel.
- * LLM olmadan da tam bir muayene yapılır — sadece açıklamalar eksik kalır.
+ * Linus philosophy: deterministic analysis first, LLM optional.
+ * Full examination works without LLM — only explanations are missing.
  */
 export class DoctorEngine {
   constructor(private readonly llm: LLMRegistry) {}
@@ -25,25 +25,25 @@ export class DoctorEngine {
     const start = Date.now()
     const examinedAt = new Date()
 
-    // Faz 1: Triaj
+    // Phase 1: Triage
     const triageResult = await triage(projectPath)
 
-    // Faz 2: Vitaller (stub — gerçek implementasyon sonraki sprint)
+    // Phase 2: Vitals (stub — real implementation next sprint)
     const vitals = buildEmptyVitals()
 
-    // Faz 3: Anamnez
+    // Phase 3: History
     const history = buildEmptyHistory()
 
-    // Faz 4+5: Framework muayenesi
+    // Phase 4+5: Framework examination
     const findings = await this.runExperts(projectPath, triageResult)
 
-    // Faz 6: Teşhis
+    // Phase 6: Diagnosis
     const diagnosis = this.diagnose(findings)
 
-    // Faz 7: Tedavi planı
+    // Phase 7: Treatment plan
     const treatmentPlan = this.prescribe(diagnosis)
 
-    // Skor
+    // Score
     const healthScore = this.calculateScore(vitals, diagnosis)
 
     const llmProvider = this.llm.getBestFor('codeUnderstanding')
@@ -70,13 +70,13 @@ export class DoctorEngine {
   private async runExperts(projectPath: string, triageResult: TriageResult): Promise<Finding[]> {
     const findings: Finding[] = []
 
-    // Generic expert — her projede çalışır
+    // Generic expert — runs on every project
     const generic = expertRegistry.get('generic')
     if (generic) {
       findings.push(...(await generic.examine(projectPath, triageResult)))
     }
 
-    // Framework-spesifik uzmanlar
+    // Framework-specific experts
     for (const fw of triageResult.frameworks) {
       const expert = expertRegistry.get(fw.name) ?? expertRegistry.get(fw.category ?? '')
       if (expert) {
@@ -101,7 +101,7 @@ export class DoctorEngine {
         : 'healthy'
 
     return {
-      conditions: [],  // kural motoru sonraki sprint
+      conditions: [],  // rule engine next sprint
       severity: overallSeverity,
       summary:
         findings.length === 0

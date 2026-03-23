@@ -94,7 +94,7 @@ export interface Finding {
   filePath?: string
   lineStart?: number
   lineEnd?: number
-  fix?: string           // kurşun geçirmez, kopyala-yapıştır fix
+  fix?: string           // bulletproof, copy-paste fix
   references?: string[]
 }
 

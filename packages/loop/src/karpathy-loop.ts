@@ -2,12 +2,17 @@
 /**
  * COCO Karpathy Loop v0.1 — Proof of Concept
  *
- * Karpathy'nin autoresearch döngüsünün yazılım mühendisliğine uyarlanmış hali.
- * 3 primitif: Editable Asset (proje kodu) + Scalar Metric (health score) + Time-boxed Cycle
+ * Karpathy's autoresearch loop adapted for software engineering.
+ * 3 primitives: Editable Asset (project code) + Scalar Metric (health score) + Time-boxed Cycle
  *
  * observe → hypothesize → experiment → evaluate → loop
  *
- * Bağımlılık: simple-git + Node.js built-ins. LLM yok, DB yok, queue yok.
+ * Dependencies: simple-git + Node.js built-ins (fetch for Ollama). No DB, no queue.
+ *
+ * Modes:
+ *   deterministic (mode 0) — rule-based hypotheses, no LLM needed
+ *   ollama (mode 1) — local LLM via Ollama, FREE, project-specific hypotheses
+ *   openclaw (mode 2) — OpenClaw coding-agent skill bridge (optional)
  */
 
 import { readdir, readFile, stat, writeFile } from 'node:fs/promises'
@@ -36,11 +41,11 @@ interface Observation {
     todoCount: number
     consoleLogCount: number
     emptyCatchCount: number
-    largeFileCount: number   // 200+ satır
+    largeFileCount: number   // 200+ lines
     envExposed: boolean
     hardcodedSecrets: number
     magicNumbers: number
-    deepNesting: number      // 4+ seviye
+    deepNesting: number      // 4+ levels
   }
   fileDetails: FileDetail[]
 }
@@ -58,7 +63,7 @@ interface FileDetail {
 
 interface Hypothesis {
   id: string
-  key: string  // deduplication key — aynı hipotezi tekrar denememek için
+  key: string  // deduplication key — prevents retrying the same hypothesis
   description: string
   category: keyof Omit<HealthScore, 'overall'>
   expectedDelta: number
@@ -84,11 +89,25 @@ interface ExperimentResult {
   error?: string
 }
 
+type LLMMode = 'auto' | 'deterministic' | 'ollama' | 'openclaw'
+
 interface LoopConfig {
   projectPath: string
   rounds: number
   dryRun: boolean
   verbose: boolean
+  mode: LLMMode
+  model: string
+  ollamaUrl: string
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// HYPOTHESIS ENGINE — pluggable hypothesis generator
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+interface HypothesisEngine {
+  name: string
+  generate(obs: Observation, tried: Set<string>): Promise<Hypothesis | null>
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -117,7 +136,7 @@ const SECRET_PATTERNS = [
 const MAGIC_NUMBER_PATTERN = /(?<![a-zA-Z_$.])\b(?!(?:0|1|2|10|100|200|201|204|301|302|400|401|403|404|500)\b)\d{4,}\b/g
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// OBSERVE — metrik topla, health score hesapla
+// OBSERVE — collect metrics, calculate health score
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 async function walkSourceFiles(dir: string, maxDepth = 8, depth = 0): Promise<string[]> {
@@ -138,7 +157,7 @@ async function walkSourceFiles(dir: string, maxDepth = 8, depth = 0): Promise<st
     } else if (SOURCE_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
       files.push(full)
     } else if (entry.name === '.env' || entry.name.match(/\.env\./)) {
-      files.push(full) // .env dosyalarını da tara
+      files.push(full) // also scan .env files
     }
   }
   return files
@@ -163,7 +182,7 @@ async function analyzeFile(filePath: string, projectPath: string): Promise<FileD
   const lines = content.split('\n')
   const relativePath = relative(projectPath, filePath)
 
-  // .env dosyaları için sadece exposed kontrolü
+  // .env files: only check for exposure
   if (basename(filePath).startsWith('.env')) {
     return {
       path: filePath,
@@ -196,14 +215,14 @@ async function analyzeFile(filePath: string, projectPath: string): Promise<FileD
 }
 
 function calculateHealthScore(metrics: Observation['metrics'], totalFiles: number): HealthScore {
-  // Her kategori 0-100, sonra ortalamayla overall
+  // Each category 0-100, then weighted average for overall
 
   // Security: secrets, env exposed
   const secretPenalty = Math.min(metrics.hardcodedSecrets * 15, 60)
   const envPenalty = metrics.envExposed ? 25 : 0
   const security = Math.max(0, 100 - secretPenalty - envPenalty)
 
-  // Maintainability: console.log, TODO, magic numbers, büyük dosyalar
+  // Maintainability: console.log, TODO, magic numbers, large files
   const consolePenalty = Math.min(metrics.consoleLogCount * 2, 30)
   const todoPenalty = Math.min(metrics.todoCount * 1.5, 20)
   const magicPenalty = Math.min(metrics.magicNumbers * 1, 15)
@@ -215,7 +234,7 @@ function calculateHealthScore(metrics: Observation['metrics'], totalFiles: numbe
   const catchPenalty = Math.min(metrics.emptyCatchCount * 10, 50)
   const reliability = Math.max(0, 100 - catchPenalty)
 
-  // Size: dosya başına ortalama satır
+  // Size: average lines per file
   const avgLines = totalFiles > 0 ? metrics.totalLines / totalFiles : 0
   const sizePenalty = avgLines > 300 ? 30 : avgLines > 200 ? 15 : avgLines > 150 ? 5 : 0
   const size = Math.max(0, 100 - sizePenalty - largePenalty)
@@ -240,7 +259,7 @@ async function observe(projectPath: string): Promise<Observation> {
   const files = await walkSourceFiles(projectPath)
   const fileDetails = await Promise.all(files.map(f => analyzeFile(f, projectPath)))
 
-  // .env exposed kontrolü
+  // .env exposure check
   const gitignorePath = join(projectPath, '.gitignore')
   let gitignoreContent = ''
   try { gitignoreContent = await readFile(gitignorePath, 'utf-8') } catch { /* */ }
@@ -278,7 +297,7 @@ async function observe(projectPath: string): Promise<Observation> {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// HYPOTHESIZE — observation'dan hipotez üret
+// HYPOTHESIZE — generate hypotheses from observations
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 function generateId(): string {
@@ -288,7 +307,7 @@ function generateId(): string {
 function hypothesize(obs: Observation, triedHypotheses: Set<string>): Hypothesis | null {
   const candidates: Hypothesis[] = []
 
-  // ── console.log kaldırma ──
+  // ── remove console.log statements ──
   const consoleLogs = obs.fileDetails.filter(f => f.consoleLogs > 0)
   if (consoleLogs.length > 0) {
     const totalLogs = consoleLogs.reduce((s, f) => s + f.consoleLogs, 0)
@@ -307,7 +326,7 @@ function hypothesize(obs: Observation, triedHypotheses: Set<string>): Hypothesis
             const targetPath = join(worktreePath, fd.relativePath)
             let content: string
             try { content = await readFile(targetPath, 'utf-8') } catch { continue }
-            // Satır bazında console.log kaldır (tam satır silme)
+            // Remove console.log lines (full line deletion)
             const lines = content.split('\n')
             const filtered = lines.filter(line => !line.trim().match(/^console\.(log|debug|info)\(.*\);?\s*$/))
             if (filtered.length !== lines.length) {
@@ -318,11 +337,11 @@ function hypothesize(obs: Observation, triedHypotheses: Set<string>): Hypothesis
           return { filesModified: modified, description: `Removed console.log from ${modified} files` }
         },
       })
-      // key'i burada ekleme — evaluate'de eklenecek
+      // don't add key here — added in evaluate phase
     }
   }
 
-  // ── Boş catch bloklarına error handling ekleme ──
+  // ── add error handling to empty catch blocks ──
   const emptyCatches = obs.fileDetails.filter(f => f.emptyCatches > 0)
   if (emptyCatches.length > 0) {
     const total = emptyCatches.reduce((s, f) => s + f.emptyCatches, 0)
@@ -356,7 +375,7 @@ function hypothesize(obs: Observation, triedHypotheses: Set<string>): Hypothesis
     }
   }
 
-  // ── TODO/FIXME'ları listeye dönüştür ──
+  // ── standardize TODO/FIXME comments ──
   const todosFiles = obs.fileDetails.filter(f => f.todos > 0)
   if (todosFiles.length > 0 && obs.metrics.todoCount >= 5) {
     const key = `cleanup-todos`
@@ -390,7 +409,7 @@ function hypothesize(obs: Observation, triedHypotheses: Set<string>): Hypothesis
     }
   }
 
-  // ── Magic number'ları named constant'a çevir ──
+  // ── extract magic numbers into named constants ──
   const magicFiles = obs.fileDetails.filter(f => f.magicNumbers > 0)
   if (magicFiles.length > 0) {
     const key = `fix-magic-numbers-${magicFiles.map(f => f.relativePath).sort().join(',')}`
@@ -408,7 +427,7 @@ function hypothesize(obs: Observation, triedHypotheses: Set<string>): Hypothesis
             const targetPath = join(worktreePath, fd.relativePath)
             let content: string
             try { content = await readFile(targetPath, 'utf-8') } catch { continue }
-            // Her magic number'ı bul ve dosya başına constant ekle
+            // find each magic number and add constants per file
             const matches = content.match(MAGIC_NUMBER_PATTERN)
             if (!matches || matches.length === 0) continue
             const unique = [...new Set(matches)]
@@ -420,7 +439,7 @@ function hypothesize(obs: Observation, triedHypotheses: Set<string>): Hypothesis
               patched = patched.replace(new RegExp(`(?<![a-zA-Z_$])${num}(?![a-zA-Z_$0-9])`, 'g'), constName)
             }
             if (patched !== content) {
-              // constant'ları import'lar sonrasına ekle
+              // insert constants after imports
               const insertIdx = patched.search(/\n(?!import |\/\/)/)
               if (insertIdx > 0) {
                 patched = patched.slice(0, insertIdx) + header + patched.slice(insertIdx)
@@ -439,13 +458,284 @@ function hypothesize(obs: Observation, triedHypotheses: Set<string>): Hypothesis
 
   if (candidates.length === 0) return null
 
-  // En yüksek expectedDelta olan hipotezi seç
+  // select hypothesis with highest expectedDelta
   candidates.sort((a, b) => b.expectedDelta - a.expectedDelta)
   return candidates[0]
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// EXPERIMENT — git worktree'de izole deney
+// ENGINE IMPLEMENTATIONS
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+class RuleBasedEngine implements HypothesisEngine {
+  name = 'deterministic'
+  async generate(obs: Observation, tried: Set<string>): Promise<Hypothesis | null> {
+    return hypothesize(obs, tried)
+  }
+}
+
+// ── Patch safety validation ──
+
+const FORBIDDEN_PATTERNS = [
+  /\beval\s*\(/,
+  /\bnew\s+Function\s*\(/,
+  /\bchild_process\b/,
+  /\bexecSync\b/,
+  /\bspawnSync\b/,
+  /\bfs\.unlinkSync\b/,
+  /\bfs\.rmdirSync\b/,
+  /\brimraf\b/,
+  /\bprocess\.exit\s*\(/,
+]
+
+const NEVER_TOUCH = [
+  /^\.env/, /\.lock$/, /package-lock\.json$/, /pnpm-lock\.yaml$/,
+  /tsconfig\.json$/, /eslint/i, /prettier/i, /biome\./i,
+]
+
+function validatePatch(relativePath: string, originalContent: string, patchedContent: string): { safe: boolean; reason?: string } {
+  // Never touch config/lock files
+  for (const pattern of NEVER_TOUCH) {
+    if (pattern.test(relativePath)) {
+      return { safe: false, reason: `Protected file: ${relativePath}` }
+    }
+  }
+
+  // Diff size limit (max 50 lines changed)
+  const origLines = originalContent.split('\n')
+  const patchLines = patchedContent.split('\n')
+  const lineDiff = Math.abs(patchLines.length - origLines.length)
+  if (lineDiff > 50) {
+    return { safe: false, reason: `Too many lines changed: ${lineDiff} (max 50)` }
+  }
+
+  // File size ±30%
+  const sizeRatio = patchedContent.length / Math.max(originalContent.length, 1)
+  if (sizeRatio > 1.3 || sizeRatio < 0.7) {
+    return { safe: false, reason: `File size change too large: ${Math.round((sizeRatio - 1) * 100)}%` }
+  }
+
+  // Forbidden patterns in NEW code only
+  const newLines = patchedContent.split('\n').filter(line => !originalContent.includes(line))
+  for (const line of newLines) {
+    for (const pattern of FORBIDDEN_PATTERNS) {
+      if (pattern.test(line)) {
+        return { safe: false, reason: `Forbidden pattern in patch: ${pattern.source}` }
+      }
+    }
+  }
+
+  return { safe: true }
+}
+
+// ── Ollama Engine ──
+
+class OllamaEngine implements HypothesisEngine {
+  name = 'ollama'
+  constructor(private model: string, private baseUrl: string) {}
+
+  async generate(obs: Observation, tried: Set<string>): Promise<Hypothesis | null> {
+    // Find the most problematic file
+    const sorted = [...obs.fileDetails].sort((a, b) => {
+      const scoreA = a.consoleLogs * 2 + a.emptyCatches * 8 + a.todos * 1.5 + a.magicNumbers + a.deepNesting * 3
+      const scoreB = b.consoleLogs * 2 + b.emptyCatches * 8 + b.todos * 1.5 + b.magicNumbers + b.deepNesting * 3
+      return scoreB - scoreA
+    })
+
+    // Try files until we find one not yet tried
+    for (const file of sorted) {
+      const key = `ollama-${file.relativePath}`
+      if (tried.has(key)) continue
+
+      // Read file content (max 300 lines for context)
+      let content: string
+      try { content = await readFile(file.path, 'utf-8') } catch { continue }
+      const lines = content.split('\n')
+      if (lines.length > 300) {
+        content = lines.slice(0, 300).join('\n') + '\n// ... truncated ...'
+      }
+
+      const ext = extname(file.relativePath).slice(1)
+      const prompt = `You are a code health improvement agent. Analyze the source code below and propose ONE small, safe change that improves code quality.
+
+FILE: ${file.relativePath} (${file.lines} lines)
+ISSUES: ${file.consoleLogs} console.log, ${file.emptyCatches} empty catches, ${file.todos} TODOs, ${file.magicNumbers} magic numbers
+HEALTH SCORE: ${obs.score.overall}/100 (security:${obs.score.security} maintainability:${obs.score.maintainability} reliability:${obs.score.reliability} size:${obs.score.size})
+
+SOURCE:
+\`\`\`${ext}
+${content}
+\`\`\`
+
+Respond with ONLY valid JSON:
+{
+  "description": "one-line description of the improvement",
+  "category": "maintainability" | "reliability" | "security",
+  "expectedDelta": <number 1-15>,
+  "search": "exact string to find in the file (multi-line ok)",
+  "replace": "replacement string"
+}
+
+RULES:
+- ONE atomic change only — do not combine multiple fixes
+- Do NOT change behavior or break existing tests
+- Do NOT add dependencies
+- Do NOT touch imports unless removing unused ones
+- Prefer removing bad code over adding new code
+- The change must be small (max 30 lines affected)
+- search/replace must be EXACT substrings of the source`
+
+      try {
+        const response = await fetch(`${this.baseUrl}/api/generate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: this.model,
+            prompt,
+            stream: false,
+            format: 'json',
+          }),
+        })
+
+        if (!response.ok) {
+          continue
+        }
+
+        const data = await response.json() as { response: string }
+        let parsed: { description: string; category: string; expectedDelta: number; search: string; replace: string }
+        try {
+          parsed = JSON.parse(data.response)
+        } catch {
+          continue
+        }
+
+        // Validate category
+        const validCategories = ['maintainability', 'reliability', 'security'] as const
+        const category = validCategories.includes(parsed.category as any)
+          ? (parsed.category as typeof validCategories[number])
+          : 'maintainability'
+
+        const expectedDelta = Math.max(1, Math.min(15, parsed.expectedDelta || 5))
+
+        return {
+          id: generateId(),
+          key,
+          description: parsed.description || `LLM improvement for ${file.relativePath}`,
+          category,
+          expectedDelta,
+          targetFiles: [file.path],
+          patchFn: async (worktreePath: string) => {
+            const targetPath = join(worktreePath, file.relativePath)
+            let fileContent: string
+            try { fileContent = await readFile(targetPath, 'utf-8') } catch { return { filesModified: 0, description: 'File not found' } }
+
+            if (!parsed.search || !parsed.replace || !fileContent.includes(parsed.search)) {
+              return { filesModified: 0, description: 'Search string not found in file' }
+            }
+
+            const patched = fileContent.replace(parsed.search, parsed.replace)
+
+            // Safety check
+            const safety = validatePatch(file.relativePath, fileContent, patched)
+            if (!safety.safe) {
+              return { filesModified: 0, description: `Patch rejected: ${safety.reason}` }
+            }
+
+            await writeFile(targetPath, patched)
+            return { filesModified: 1, description: parsed.description }
+          },
+        }
+      } catch {
+        continue
+      }
+    }
+
+    return null
+  }
+}
+
+// ── OpenClaw Engine (bridge to Ollama via OpenClaw coding-agent) ──
+
+class OpenClawEngine implements HypothesisEngine {
+  name = 'openclaw'
+  private fallback: OllamaEngine
+
+  constructor(model: string, ollamaUrl: string) {
+    this.fallback = new OllamaEngine(model, ollamaUrl)
+  }
+
+  async generate(obs: Observation, tried: Set<string>): Promise<Hypothesis | null> {
+    // OpenClaw uses Ollama as backend — for now, delegate directly
+    // Future: use OpenClaw's coding-agent skill API when available
+    return this.fallback.generate(obs, tried)
+  }
+}
+
+// ── Auto-detection ──
+
+async function detectLLMMode(config: LoopConfig): Promise<{ engine: HypothesisEngine; label: string }> {
+  if (config.mode === 'deterministic') {
+    return { engine: new RuleBasedEngine(), label: 'deterministic (rule-based, no LLM)' }
+  }
+
+  if (config.mode === 'ollama' || config.mode === 'auto') {
+    try {
+      const resp = await fetch(`${config.ollamaUrl}/api/tags`, { signal: AbortSignal.timeout(3000) })
+      if (resp.ok) {
+        const data = await resp.json() as { models?: Array<{ name: string }> }
+        const models = data.models || []
+        const hasModel = models.some(m => m.name.includes(config.model.split(':')[0]))
+
+        if (hasModel) {
+          if (config.mode === 'ollama' || config.mode === 'auto') {
+            return {
+              engine: new OllamaEngine(config.model, config.ollamaUrl),
+              label: `${config.model} (Ollama, local, FREE)`,
+            }
+          }
+        } else {
+          if (config.mode === 'ollama') {
+            console.error(`\x1b[31mError: Model "${config.model}" not found. Run: ollama pull ${config.model}\x1b[0m`)
+            process.exit(1)
+          }
+          // auto mode: fallback
+          if (config.mode === 'auto') {
+            log('observe', `\x1b[33mOllama found but model "${config.model}" not available. Using deterministic mode.\x1b[0m`)
+            log('observe', `\x1b[33mRun: ollama pull ${config.model}\x1b[0m`)
+          }
+        }
+      }
+    } catch {
+      if (config.mode === 'ollama') {
+        console.error('\x1b[31mError: Cannot connect to Ollama. Is it running? Install: https://ollama.com\x1b[0m')
+        process.exit(1)
+      }
+      if (config.mode === 'auto') {
+        log('observe', '\x1b[33mOllama not found. Using deterministic mode. Install for smarter hypotheses: https://ollama.com\x1b[0m')
+      }
+    }
+  }
+
+  if (config.mode === 'openclaw') {
+    // OpenClaw delegates to Ollama — check Ollama first
+    try {
+      const resp = await fetch(`${config.ollamaUrl}/api/tags`, { signal: AbortSignal.timeout(3000) })
+      if (resp.ok) {
+        return {
+          engine: new OpenClawEngine(config.model, config.ollamaUrl),
+          label: `OpenClaw → ${config.model} (Ollama backend, FREE)`,
+        }
+      }
+    } catch { /* */ }
+    console.error('\x1b[31mError: OpenClaw mode requires Ollama. Install: https://ollama.com\x1b[0m')
+    process.exit(1)
+  }
+
+  return { engine: new RuleBasedEngine(), label: 'deterministic (rule-based, no LLM)' }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// EXPERIMENT — isolated experiment in git worktree
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 function detectTestCommand(projectPath: string): string | null {
@@ -486,7 +776,7 @@ function runTests(projectPath: string, testCommand: string): boolean {
     execSync(testCommand, {
       cwd: projectPath,
       stdio: 'pipe',
-      timeout: 120_000, // 2 dakika timeout
+      timeout: 120_000, // 2 minute timeout
       env: { ...process.env, CI: '1', NODE_ENV: 'test' },
     })
     return true
@@ -541,14 +831,14 @@ async function run(config: LoopConfig) {
   const { projectPath, rounds, dryRun } = config
   const git = simpleGit(projectPath)
 
-  // Git repo mu kontrol et
+  // check if git repo
   const isRepo = await git.checkIsRepo().catch(() => false)
   if (!isRepo) {
     console.error('\x1b[31mError: Not a git repository. Karpathy Loop requires git.\x1b[0m')
     process.exit(1)
   }
 
-  // Uncommitted changes var mı?
+  // check for uncommitted changes
   const status = await git.status()
   if (status.modified.length > 0 || status.staged.length > 0) {
     console.error('\x1b[31mError: Uncommitted changes detected. Commit or stash first.\x1b[0m')
@@ -557,24 +847,28 @@ async function run(config: LoopConfig) {
 
   const currentBranch = status.current || 'main'
 
+  // Detect LLM mode
+  const { engine, label } = await detectLLMMode(config)
+
   console.log()
   console.log('  \x1b[1mCOCO Karpathy Loop v0.1\x1b[0m')
   console.log(`  Target: ${projectPath}`)
+  console.log(`  LLM: ${label}`)
   if (dryRun) console.log('  \x1b[33mMode: DRY RUN (no changes will be made)\x1b[0m')
   console.log('  ━━━━━━━━━━━━━━━━━━━━━━━━')
   console.log()
 
-  // İlk observation
+  // initial observation
   const initialObs = await observe(projectPath)
   log('observe', `Initial health score: \x1b[1m${initialObs.score.overall}/100\x1b[0m`)
   printScore(initialObs.score)
   console.log()
 
   if (dryRun) {
-    // Dry run: sadece observe + hypothesize
+    // Dry run: observe + hypothesize only
     const triedSet = new Set<string>()
     for (let i = 0; i < rounds; i++) {
-      const h = hypothesize(initialObs, triedSet)
+      const h = await engine.generate(initialObs, triedSet)
       if (!h) { log('hypothesize', 'No more hypotheses to try.'); break }
       log('hypothesize', `"${h.description}" → expected +${h.expectedDelta} ${h.category}`)
       triedSet.add(h.key)
@@ -584,7 +878,7 @@ async function run(config: LoopConfig) {
     return
   }
 
-  // Test komutu
+  // detect test command
   const testCommand = detectTestCommand(projectPath)
   if (testCommand) {
     log('observe', `Test command detected: \x1b[1m${testCommand}\x1b[0m`)
@@ -601,12 +895,12 @@ async function run(config: LoopConfig) {
     console.log(`  \x1b[90m[round ${round}/${rounds}]\x1b[0m`)
     const roundStart = Date.now()
 
-    // Re-observe (her round'da güncel durumu oku)
+    // re-observe (read current state each round)
     const obs = round === 1 ? initialObs : await observe(projectPath)
     currentScore = obs.score.overall
 
-    // Hypothesize
-    const hypothesis = hypothesize(obs, triedHypotheses)
+    // Hypothesize (via selected engine)
+    const hypothesis = await engine.generate(obs, triedHypotheses)
     if (!hypothesis) {
       log('hypothesize', 'No more hypotheses to try. Stopping.')
       break
@@ -614,7 +908,7 @@ async function run(config: LoopConfig) {
     triedHypotheses.add(hypothesis.key)
     log('hypothesize', `"${hypothesis.description}" → expected +${hypothesis.expectedDelta} ${hypothesis.category}`)
 
-    // Experiment — git worktree oluştur
+    // Experiment — create git worktree
     const expId = hypothesis.id
     const worktreePath = join(projectPath, '..', `coco-exp-${expId}`)
     const branchName = `experiment/${expId}`
@@ -622,10 +916,10 @@ async function run(config: LoopConfig) {
     try {
       log('experiment', `worktree: ${relative(projectPath, worktreePath)} | branch: ${branchName}`)
 
-      // Worktree oluştur
+      // create worktree
       await git.raw(['worktree', 'add', '-b', branchName, worktreePath])
 
-      // Patch uygula
+      // apply patch
       const patchResult = await hypothesis.patchFn(worktreePath)
       log('patch', patchResult.description)
 
@@ -648,7 +942,7 @@ async function run(config: LoopConfig) {
         continue
       }
 
-      // Testleri çalıştır (varsa)
+      // run tests (if available)
       let testsPassed: boolean | null = null
       if (testCommand) {
         testsPassed = runTests(worktreePath, testCommand)
@@ -676,7 +970,7 @@ async function run(config: LoopConfig) {
         // Merge experiment branch into main
         await git.raw(['worktree', 'remove', '--force', worktreePath]).catch(() => {})
         await git.merge([branchName, '--no-ff', '-m', `coco: merge experiment/${expId}`]).catch(async () => {
-          // Merge conflict — fast-forward dene
+          // Merge conflict — try fast-forward
           await git.merge([branchName]).catch(() => {})
         })
         await git.raw(['branch', '-d', branchName]).catch(() => {})
@@ -772,6 +1066,9 @@ function parseArgs(args: string[]): LoopConfig {
   let rounds = 5
   let dryRun = false
   let verbose = false
+  let mode: LLMMode = 'auto'
+  let model = 'qwen3-coder:30b'
+  let ollamaUrl = 'http://localhost:11434'
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]
@@ -781,6 +1078,18 @@ function parseArgs(args: string[]): LoopConfig {
       dryRun = true
     } else if (arg === '--verbose' || arg === '-v') {
       verbose = true
+    } else if (arg === '--mode') {
+      const val = args[++i] || 'auto'
+      if (['auto', 'deterministic', 'ollama', 'openclaw'].includes(val)) {
+        mode = val as LLMMode
+      } else {
+        console.error(`\x1b[31mError: Invalid mode "${val}". Use: auto, deterministic, ollama, openclaw\x1b[0m`)
+        process.exit(1)
+      }
+    } else if (arg === '--model') {
+      model = args[++i] || model
+    } else if (arg === '--ollama-url') {
+      ollamaUrl = args[++i] || ollamaUrl
     } else if (arg === '--help' || arg === '-h') {
       console.log(`
   COCO Karpathy Loop v0.1
@@ -788,15 +1097,25 @@ function parseArgs(args: string[]): LoopConfig {
   Usage: npx tsx karpathy-loop.ts [project-path] [options]
 
   Options:
-    --rounds, -r <n>    Number of experiment rounds (default: 5)
-    --dry-run, -n       Only observe and hypothesize, no changes
-    --verbose, -v       Show detailed output
-    --help, -h          Show this help
+    --rounds, -r <n>                    Number of experiment rounds (default: 5)
+    --dry-run, -n                       Only observe and hypothesize, no changes
+    --mode <auto|deterministic|ollama|openclaw>  LLM mode (default: auto)
+    --model <name>                      Ollama model (default: qwen3-coder:30b)
+    --ollama-url <url>                  Ollama endpoint (default: http://localhost:11434)
+    --verbose, -v                       Show detailed output
+    --help, -h                          Show this help
+
+  Modes:
+    auto           Auto-detect Ollama, fallback to deterministic
+    deterministic  Rule-based hypotheses, no LLM needed (FREE)
+    ollama         Local LLM via Ollama (FREE)
+    openclaw       OpenClaw coding-agent bridge (FREE with Ollama backend)
 
   Examples:
-    npx tsx karpathy-loop.ts .                    # Current dir, 5 rounds
-    npx tsx karpathy-loop.ts /path/to/project -r 10
-    npx tsx karpathy-loop.ts . --dry-run          # Preview only
+    npx tsx karpathy-loop.ts .                           # Auto-detect
+    npx tsx karpathy-loop.ts . --mode deterministic      # No LLM
+    npx tsx karpathy-loop.ts . --mode ollama -r 10       # Ollama, 10 rounds
+    npx tsx karpathy-loop.ts . --dry-run                 # Preview only
 `)
       process.exit(0)
     } else if (!arg.startsWith('-')) {
@@ -808,7 +1127,7 @@ function parseArgs(args: string[]): LoopConfig {
     ? join(process.cwd(), positional[0]).replace(/\/+$/, '')
     : process.cwd()
 
-  return { projectPath, rounds, dryRun, verbose }
+  return { projectPath, rounds, dryRun, verbose, mode, model, ollamaUrl }
 }
 
 // SIGINT graceful shutdown

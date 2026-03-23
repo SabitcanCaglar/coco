@@ -98,7 +98,7 @@ async function detectFrameworks(
   check('docker', ['docker-compose.yml', 'docker-compose.yaml', 'Dockerfile'], 0.95, 'infra')
   check('github-actions', ['.github/workflows/'], 0.95, 'ci')
 
-  // package.json içinden daha detaylı tespit
+  // more detailed detection from package.json
   const pkgPath = join(projectPath, 'package.json')
   if (await fileExists(pkgPath)) {
     const pkg = JSON.parse(await readFile(pkgPath, 'utf-8').catch(() => '{}')).dependencies ?? {}
@@ -114,12 +114,12 @@ async function quickRedFlagScan(projectPath: string, files: string[]): Promise<R
   const flags: RedFlag[] = []
   const gitignorePath = join(projectPath, '.gitignore')
 
-  // .gitignore yok mu?
+  // missing .gitignore?
   if (!(await fileExists(gitignorePath))) {
     flags.push({ id: 'no-gitignore', severity: 'medium', message: 'No .gitignore file found' })
   }
 
-  // .env git'e eklenmiş mi?
+  // .env committed to git?
   const envFiles = files.filter((f) => /\.env(\.|$)/.test(f))
   if (envFiles.length > 0) {
     let gitignoreContent = ''
@@ -178,7 +178,7 @@ export async function triage(projectPath: string): Promise<TriageResult> {
     : 'normal'
 
   return {
-    projectType: 'web_app',  // daha derin analiz ile iyileştirilebilir
+    projectType: 'web_app',  // can be refined with deeper analysis
     languages,
     primaryLanguage,
     frameworks,

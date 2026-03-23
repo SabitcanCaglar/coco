@@ -8,14 +8,14 @@ export interface FrameworkExpert {
 
 export const expertRegistry = new Map<string, FrameworkExpert>()
 
-// ── Generic expert — her projede çalışır ────────────────────────────────────
+// ── Generic expert — runs on every project ──────────────────────────────────
 expertRegistry.set('generic', {
   id: 'generic',
   frameworks: ['*'],
   async examine(projectPath, triage) {
     const findings: Finding[] = []
 
-    // Red flag'leri finding'e dönüştür
+    // convert red flags to findings
     for (const flag of triage.redFlags) {
       findings.push({
         id: `generic-redflag-${flag.id}`,
@@ -32,28 +32,28 @@ expertRegistry.set('generic', {
   },
 })
 
-// ── Next.js uzmanı ───────────────────────────────────────────────────────────
+// ── Next.js expert ──────────────────────────────────────────────────────────
 expertRegistry.set('nextjs', {
   id: 'nextjs',
   frameworks: ['nextjs'],
   async examine(_projectPath, _triage) {
     // TODO: next.config.js security headers, server/client boundary,
-    //       API route rate limiting, ISR/SSG/SSR seçimi
+    //       API route rate limiting, ISR/SSG/SSR selection
     return []
   },
 })
 
-// ── Supabase uzmanı ──────────────────────────────────────────────────────────
+// ── Supabase expert ─────────────────────────────────────────────────────────
 expertRegistry.set('supabase', {
   id: 'supabase',
   frameworks: ['supabase'],
   async examine(_projectPath, _triage) {
-    // TODO: RLS kontrol, service_role key client'ta mı?
+    // TODO: RLS check, service_role key in client code?
     return []
   },
 })
 
-// ── Prisma uzmanı ────────────────────────────────────────────────────────────
+// ── Prisma expert ───────────────────────────────────────────────────────────
 expertRegistry.set('prisma', {
   id: 'prisma',
   frameworks: ['prisma'],
@@ -63,7 +63,7 @@ expertRegistry.set('prisma', {
   },
 })
 
-// ── Docker uzmanı ────────────────────────────────────────────────────────────
+// ── Docker expert ───────────────────────────────────────────────────────────
 expertRegistry.set('docker', {
   id: 'docker',
   frameworks: ['docker'],
@@ -74,7 +74,7 @@ expertRegistry.set('docker', {
 })
 
 /**
- * Plugin API — topluluk uzmanları bu fonksiyon ile kayıt yaptırır
+ * Plugin API — community experts register via this function
  */
 export function defineFrameworkExpert(expert: FrameworkExpert): FrameworkExpert {
   expertRegistry.set(expert.id, expert)

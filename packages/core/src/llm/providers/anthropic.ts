@@ -7,7 +7,7 @@ export class AnthropicProvider implements LLMProvider {
   readonly id = 'anthropic'
   readonly name = 'Claude (Anthropic)'
   readonly capabilities: LLMCapabilities = {
-    embedding: false,       // Anthropic embedding yok — Ollama'ya fallback
+    embedding: false,       // no Anthropic embedding — fallback to Ollama
     codeUnderstanding: true,
     longContext: true,      // 200K context
     streaming: true,

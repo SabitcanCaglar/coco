@@ -36,7 +36,7 @@ export class LLMRegistry {
     }
 
     if (process.env.OPENAI_API_KEY) {
-      // OpenAI provider — yüklü değilse skip (optional dependency)
+      // OpenAI provider — skip if not installed (optional dependency)
       try {
         const { OpenAIProvider } = await import('./providers/openai.js')
         this.register(new OpenAIProvider(process.env.OPENAI_API_KEY))
