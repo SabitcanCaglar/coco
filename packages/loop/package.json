@@ -1,0 +1,17 @@
+{
+  "name": "@coco/loop",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/karpathy-loop.ts",
+  "scripts": {
+    "start": "tsx src/karpathy-loop.ts",
+    "loop": "tsx src/karpathy-loop.ts"
+  },
+  "dependencies": {
+    "simple-git": "^3.27.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

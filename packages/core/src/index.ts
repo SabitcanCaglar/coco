@@ -1,0 +1,8 @@
+export { DoctorEngine } from './doctor/engine.js'
+export { LLMRegistry } from './llm/registry.js'
+export { OllamaProvider } from './llm/providers/ollama.js'
+export { AnthropicProvider } from './llm/providers/anthropic.js'
+export { NullProvider } from './llm/providers/null.js'
+export { expertRegistry, defineFrameworkExpert } from './doctor/experts/registry.js'
+export type * from './doctor/types.js'
+export type * from './llm/provider.js'
