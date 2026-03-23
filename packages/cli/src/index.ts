@@ -259,6 +259,7 @@ export async function runCLI(argv: string[], io: CLIIO = defaultIO): Promise<num
       }
 
       const runJob = await loadRunJob()
+      const pluginPaths = getPluginPaths()
       const result = await runJob(
         {
           id: randomUUID(),
@@ -273,6 +274,7 @@ export async function runCLI(argv: string[], io: CLIIO = defaultIO): Promise<num
           },
         },
         {
+          pluginPaths,
           getRepo: async () => ({
             id: repo.id,
             rootPath: repo.rootPath,

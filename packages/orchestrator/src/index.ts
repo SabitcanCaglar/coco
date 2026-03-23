@@ -42,6 +42,7 @@ export interface DaemonConfig {
   port?: number
   dataDir?: string
   embeddedWorker?: boolean
+  pluginPaths?: string[]
 }
 
 function getDefaultDataDir(): string {
@@ -119,6 +120,12 @@ export function createDaemon(config: DaemonConfig = {}) {
   const dbPath = join(dataDir, 'coco.sqlite')
   const DatabaseSync = loadDatabaseSync()
   const db = new DatabaseSync(dbPath)
+  const pluginPaths =
+    config.pluginPaths ??
+    (process.env.COCO_PLUGIN_PATHS ?? '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean)
   db.exec(`
     CREATE TABLE IF NOT EXISTS repos (
       id TEXT PRIMARY KEY,
@@ -296,6 +303,7 @@ export function createDaemon(config: DaemonConfig = {}) {
           return toRepo(row)
         },
         appendEvent,
+        pluginPaths,
       })
       const status = result.success ? 'completed' : 'failed'
       statements.updateJobFinish.run(status, now(), JSON.stringify(result), job.id)
@@ -405,6 +413,7 @@ export function createDaemon(config: DaemonConfig = {}) {
       port: config.port ?? DEFAULT_PORT,
       dataDir,
       embeddedWorker: config.embeddedWorker ?? true,
+      pluginPaths,
     },
     server,
     start(): Promise<void> {

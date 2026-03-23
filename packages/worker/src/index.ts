@@ -19,6 +19,7 @@ function getConfiguredPluginPaths(): string[] {
 export interface WorkerServices {
   getRepo(repoId: string): Promise<RepoRef>
   appendEvent(event: Omit<JobEvent, 'id' | 'timestamp'>): Promise<void>
+  pluginPaths?: string[]
 }
 
 export const workerPackage = {
@@ -61,7 +62,7 @@ async function emit(
 
 export async function runJob(job: Job, services: WorkerServices): Promise<JobResult> {
   const repo = await services.getRepo(job.repoId)
-  const pluginPaths = getConfiguredPluginPaths()
+  const pluginPaths = services.pluginPaths ?? getConfiguredPluginPaths()
   const doctor = new DoctorRuntime({ pluginPaths })
   const review = new ReviewGate({ pluginPaths })
   const llm = new LLMRegistry(undefined, { pluginPaths })

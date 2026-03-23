@@ -86,9 +86,9 @@ describe('@coco/orchestrator', () => {
     const daemon = createDaemon({
       port: 0,
       dataDir,
+      pluginPaths: [pluginDir],
     })
     daemons.push(daemon)
-    process.env.COCO_PLUGIN_PATHS = pluginDir
     await daemon.start()
 
     const address = daemon.server.address()
@@ -136,7 +136,6 @@ describe('@coco/orchestrator', () => {
     await rm(repoPath, { recursive: true, force: true })
     await rm(pluginDir, { recursive: true, force: true })
     await rm(dataDir, { recursive: true, force: true })
-    process.env.COCO_PLUGIN_PATHS = undefined
   })
 })
 

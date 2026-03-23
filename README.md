@@ -156,11 +156,11 @@ Three primitives. That's all:
 |-------|---------------|--------|
 | **Karpathy Loop** | observe → hypothesize → experiment → evaluate | **Working** |
 | **Core Contracts** | Pure domain types, scoring model, patch schema, command policy | **Working** |
-| **Doctor Engine** | 8-phase examination: triage → vitals → diagnosis → treatment | Scaffolded |
-| **Orchestrator** | Task queue, worker assignment, capacity management | Scaffolded |
-| **Worker** | Single repo / single branch / single worktree | Scaffolded |
-| **LLM Providers** | Ollama / Claude / OpenAI / NullProvider package boundary | Scaffolded |
-| **Review Gate** | Lint + test + diff review; no merge without approval | Scaffolded |
+| **Doctor Engine** | Local examination runtime with built-in and external framework experts | **Working** |
+| **Orchestrator** | Local SQLite daemon, repo registry, queue, and worker dispatch | **Working** |
+| **Worker** | Single repo / single branch / single worktree review-first execution | **Working** |
+| **LLM Providers** | Null + Ollama providers with external plugin loading | **Working** |
+| **Review Gate** | Diff + build + test review checks with plugin-backed policy checks | **Working** |
 
 ---
 
@@ -213,6 +213,25 @@ export OPENAI_API_KEY=...
 git clone https://github.com/canfamily/coco
 cd coco
 pnpm install
+```
+
+### Local Maintainer Runtime
+
+```bash
+# Register a repo
+pnpm --filter @coco/cli exec coco repo add .
+
+# Run a doctor exam directly or through the local daemon
+pnpm --filter @coco/cli exec coco doctor run . --json
+
+# Run one review-first loop experiment
+pnpm --filter @coco/cli exec coco loop run . --rounds 1 --provider null --json
+
+# Review the current repo
+pnpm --filter @coco/cli exec coco review run . --json
+
+# Start the loopback-only daemon
+pnpm --filter @coco/cli exec coco daemon start
 ```
 
 ### Karpathy Loop (Working Now)
@@ -274,6 +293,31 @@ cp .env.example .env
 docker compose up -d
 ```
 
+## Plugin Runtime
+
+`coco` now supports three plugin kinds:
+
+- `framework-expert`
+- `review-check`
+- `llm-provider`
+
+Built-in plugins are always loaded. External plugins can be loaded from one or more files or directories with `COCO_PLUGIN_PATHS`.
+
+```bash
+# Load all plugin modules from the example directory
+export COCO_PLUGIN_PATHS=./examples/plugins
+
+# Inspect what coco sees
+pnpm --filter @coco/cli exec coco plugins list --json
+pnpm --filter @coco/cli exec coco plugins inspect example-doctor-repo-note --json
+
+# External plugins now participate in runtime flows
+pnpm --filter @coco/cli exec coco doctor run . --json
+pnpm --filter @coco/cli exec coco review run . --json
+```
+
+Example plugin modules live in [examples/plugins/doctor-repo-note.mjs](/Users/canfamily/Desktop/coco/examples/plugins/doctor-repo-note.mjs), [examples/plugins/review-policy-note.mjs](/Users/canfamily/Desktop/coco/examples/plugins/review-policy-note.mjs), and [examples/plugins/llm-mock-provider.mjs](/Users/canfamily/Desktop/coco/examples/plugins/llm-mock-provider.mjs).
+
 ---
 
 ## Project Structure
@@ -284,11 +328,13 @@ coco/
     loop/           Karpathy Loop engine (working)
     core/           Pure contracts, scoring, patch, and policy types
     llm/            Provider registry and adapters (scaffolded)
-    doctor/         Doctor engine and framework experts (scaffolded)
-    orchestrator/   Task queue, worker management (scaffolded)
-    worker/         Single-project coding agent (scaffolded)
-    review/         Lint, test, diff review gate (scaffolded)
-    cli/            CLI commands (scaffolded)
+    doctor/         Doctor engine and framework experts
+    orchestrator/   Local daemon, repo registry, and job queue
+    worker/         Single-project review-first coding worker
+    review/         Lint, test, diff, and plugin-backed review gate
+    cli/            CLI commands and plugin inspection
+  examples/
+    plugins/        External plugin examples
   docker/
     compose.yml
     Dockerfile.*
