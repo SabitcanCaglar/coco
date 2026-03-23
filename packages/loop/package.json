@@ -1,11 +1,16 @@
 {
   "name": "@coco/loop",
   "version": "0.1.0",
+  "private": true,
   "type": "module",
-  "main": "src/karpathy-loop.ts",
+  "main": "dist/karpathy-loop.js",
+  "types": "dist/karpathy-loop.d.ts",
+  "files": ["dist"],
   "scripts": {
     "start": "tsx src/karpathy-loop.ts",
-    "loop": "tsx src/karpathy-loop.ts"
+    "loop": "tsx src/karpathy-loop.ts",
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty false"
   },
   "dependencies": {
     "simple-git": "^3.27.0"

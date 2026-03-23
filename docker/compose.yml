@@ -7,7 +7,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: coco
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-coco_local}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD?Set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: coco
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -80,7 +80,7 @@ services:
       redis:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://coco:${POSTGRES_PASSWORD:-coco_local}@postgres:5432/coco
+      DATABASE_URL: postgresql://coco:${POSTGRES_PASSWORD?Set POSTGRES_PASSWORD in .env}@postgres:5432/coco
       REDIS_URL: redis://redis:6379
       OLLAMA_URL: http://ollama:11434
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
@@ -106,7 +106,7 @@ services:
       redis:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://coco:${POSTGRES_PASSWORD:-coco_local}@postgres:5432/coco
+      DATABASE_URL: postgresql://coco:${POSTGRES_PASSWORD?Set POSTGRES_PASSWORD in .env}@postgres:5432/coco
       REDIS_URL: redis://redis:6379
       OLLAMA_URL: http://ollama:11434
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
