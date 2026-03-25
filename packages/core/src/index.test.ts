@@ -18,6 +18,10 @@ import {
   REVIEW_CHECK_KINDS,
   type RepoRef,
   SCORE_CATEGORIES,
+  TASK_MODES,
+  TASK_STATUSES,
+  type Task,
+  WORKER_KINDS,
   checkPluginCompatibility,
   resolvePluginEntrypoints,
   validatePluginManifest,
@@ -33,6 +37,9 @@ describe('@coco/core', () => {
     expect(REVIEW_CHECK_KINDS).toContain('test')
     expect(COMMAND_DISPOSITIONS).toContain('ask')
     expect(PLUGIN_KINDS).toContain('llm-provider')
+    expect(TASK_MODES).toContain('autopilot')
+    expect(TASK_STATUSES).toContain('blocked')
+    expect(WORKER_KINDS).toContain('fix-worker')
   })
 
   it('ships a default scoring model and command policy', () => {
@@ -63,6 +70,24 @@ describe('@coco/core', () => {
     expect(plugin.kind).toBe('framework-expert')
     expect(validatePluginManifest(plugin).valid).toBe(true)
     expect(checkPluginCompatibility(plugin).supported).toBe(true)
+  })
+
+  it('exports task and monitoring contracts for supervisor runtimes', () => {
+    const task: Task = {
+      id: 'task-1',
+      goal: 'Inspect repo state',
+      mode: 'analyze',
+      status: 'queued',
+      sessionId: 'session-1',
+      plan: {
+        steps: [],
+      },
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+
+    expect(task.mode).toBe('analyze')
+    expect(task.status).toBe('queued')
   })
 
   it('resolves plugin entrypoints from directories', async () => {

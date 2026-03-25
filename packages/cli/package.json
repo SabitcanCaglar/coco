@@ -24,6 +24,8 @@
     "@coco/doctor": "workspace:*",
     "@coco/llm": "workspace:*",
     "@coco/loop": "workspace:*",
+    "@coco/openclaw-supervisor": "workspace:*",
+    "@coco/openclaw-agent": "workspace:*",
     "@coco/orchestrator": "workspace:*",
     "@coco/review": "workspace:*",
     "@coco/worker": "workspace:*",

@@ -10,6 +10,12 @@
   "exclude": ["dist", "node_modules"],
   "references": [
     {
+      "path": "../openclaw-supervisor"
+    },
+    {
+      "path": "../openclaw-agent"
+    },
+    {
       "path": "../core"
     },
     {

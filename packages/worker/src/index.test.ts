@@ -91,6 +91,7 @@ describe('@coco/worker', () => {
     const fixture = await createFixtureRepo()
     const git = simpleGit(fixture.repo.rootPath)
     let worktreePath: string | undefined
+    let patchArtifactPath: string | undefined
     const job: Job = {
       id: 'job-2',
       type: 'loop',
@@ -114,12 +115,17 @@ describe('@coco/worker', () => {
       expect(result.review?.outcome).toBe('needs-approval')
       expect(result.experiment?.worktreePath).toBeDefined()
       expect(result.experiment?.branchName).toBeDefined()
+      expect(result.experiment?.patchArtifactPath).toBeDefined()
       worktreePath = result.experiment?.worktreePath
+      patchArtifactPath = result.experiment?.patchArtifactPath
       expect(beforeHead).toBe(afterHead)
       expect(result.summary).toContain('Loop completed')
     } finally {
       if (worktreePath) {
         await rm(worktreePath, { recursive: true, force: true })
+      }
+      if (patchArtifactPath) {
+        await rm(patchArtifactPath, { force: true })
       }
       await fixture.cleanup()
     }

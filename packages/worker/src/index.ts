@@ -33,6 +33,9 @@ function toLoopMode(provider?: string): 'auto' | 'deterministic' | 'ollama' | 'o
   switch (provider) {
     case 'ollama':
       return 'ollama'
+    case 'openclaw':
+    case 'openrouter':
+      return 'openclaw'
     case 'null':
       return 'deterministic'
     default:
@@ -104,13 +107,24 @@ export async function runJob(job: Job, services: WorkerServices): Promise<JobRes
   })
   const loopSummary = await runKarpathyLoop({
     projectPath: repo.rootPath,
-    rounds: 1,
+    rounds:
+      'rounds' in job.payload && typeof job.payload.rounds === 'number' ? job.payload.rounds : 1,
     dryRun: 'dryRun' in job.payload ? Boolean(job.payload.dryRun) : false,
     verbose: false,
     mode: toLoopMode(resolution.provider),
     model: resolution.model,
     ollamaUrl: 'http://127.0.0.1:11434',
+    ...(process.env.OPENROUTER_API_KEY ? { openRouterApiKey: process.env.OPENROUTER_API_KEY } : {}),
+    ...(process.env.OPENROUTER_BASE_URL
+      ? { openRouterBaseUrl: process.env.OPENROUTER_BASE_URL }
+      : {}),
     mergeValidated: false,
+    ...('goal' in job.payload && typeof job.payload.goal === 'string'
+      ? { taskGoal: job.payload.goal }
+      : {}),
+    ...('planExcerpt' in job.payload && typeof job.payload.planExcerpt === 'string'
+      ? { planExcerpt: job.payload.planExcerpt }
+      : {}),
   })
   const latestExperiment = loopSummary.results.at(-1)
   const reviewPath =
@@ -138,6 +152,9 @@ export async function runJob(job: Job, services: WorkerServices): Promise<JobRes
         ...(latestExperiment.commitHash ? { commitHash: latestExperiment.commitHash } : {}),
         ...(latestExperiment.branchName ? { branchName: latestExperiment.branchName } : {}),
         ...(latestExperiment.worktreePath ? { worktreePath: latestExperiment.worktreePath } : {}),
+        ...(latestExperiment.patchArtifactPath
+          ? { patchArtifactPath: latestExperiment.patchArtifactPath }
+          : {}),
         ...(latestExperiment.error ? { error: latestExperiment.error } : {}),
       }
     : undefined

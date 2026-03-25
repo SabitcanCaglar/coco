@@ -19,6 +19,8 @@ export interface LoopJobPayload {
   provider?: string
   model?: string
   dryRun?: boolean
+  goal?: string
+  planExcerpt?: string
 }
 
 export type JobPayload = DoctorJobPayload | LoopJobPayload
