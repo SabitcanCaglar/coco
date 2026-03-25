@@ -18,7 +18,7 @@
 import { execSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
-import { readFile, readdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { basename, extname, join, relative } from 'node:path'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -90,6 +90,7 @@ export interface ExperimentResult {
   commitHash?: string
   branchName?: string
   worktreePath?: string
+  patchArtifactPath?: string
   duration: number
   error?: string
 }
@@ -113,7 +114,30 @@ export interface LoopConfig {
   mode: LLMMode
   model: string
   ollamaUrl: string
+  openRouterApiKey?: string
+  openRouterBaseUrl?: string
   mergeValidated?: boolean
+  taskGoal?: string
+  planExcerpt?: string
+}
+
+async function writePatchArtifact(
+  projectPath: string,
+  git: ReturnType<typeof simpleGit>,
+  baseBranch: string,
+  branchName: string,
+  expId: string,
+): Promise<string | undefined> {
+  const patch = await git.diff([`${baseBranch}...${branchName}`, '--binary'])
+  if (!patch.trim()) {
+    return undefined
+  }
+
+  const artifactDir = join(projectPath, '..', '.coco-artifacts', basename(projectPath), 'patches')
+  await mkdir(artifactDir, { recursive: true })
+  const artifactPath = join(artifactDir, `${expId}.patch`)
+  await writeFile(artifactPath, patch, 'utf-8')
+  return artifactPath
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -775,16 +799,186 @@ RULES:
 
 class OpenClawEngine implements HypothesisEngine {
   name = 'openclaw'
-  private fallback: OllamaEngine
+  private readonly fallback?: OllamaEngine
+  private readonly remote?: OpenRouterEngine
 
-  constructor(model: string, ollamaUrl: string) {
+  constructor(
+    model: string,
+    ollamaUrl: string,
+    openRouterApiKey?: string,
+    openRouterBaseUrl = 'https://openrouter.ai/api/v1',
+    private readonly taskGoal?: string,
+    private readonly planExcerpt?: string,
+  ) {
+    if (openRouterApiKey) {
+      this.remote = new OpenRouterEngine(
+        model,
+        openRouterApiKey,
+        openRouterBaseUrl,
+        taskGoal,
+        planExcerpt,
+      )
+      return
+    }
     this.fallback = new OllamaEngine(model, ollamaUrl)
   }
 
   async generate(obs: Observation, tried: Set<string>): Promise<Hypothesis | null> {
-    // OpenClaw uses Ollama as backend — for now, delegate directly
-    // Future: use OpenClaw's coding-agent skill API when available
+    if (this.remote) {
+      return this.remote.generate(obs, tried)
+    }
+    if (!this.fallback) {
+      return null
+    }
     return this.fallback.generate(obs, tried)
+  }
+}
+
+class OpenRouterEngine implements HypothesisEngine {
+  name = 'openrouter'
+
+  constructor(
+    private readonly model: string,
+    private readonly apiKey: string,
+    private readonly baseUrl: string,
+    private readonly taskGoal?: string,
+    private readonly planExcerpt?: string,
+  ) {}
+
+  async generate(obs: Observation, tried: Set<string>): Promise<Hypothesis | null> {
+    const sorted = [...obs.fileDetails].sort((a, b) => {
+      const scoreA =
+        a.consoleLogs * 2 + a.emptyCatches * 8 + a.todos * 1.5 + a.magicNumbers + a.deepNesting * 3
+      const scoreB =
+        b.consoleLogs * 2 + b.emptyCatches * 8 + b.todos * 1.5 + b.magicNumbers + b.deepNesting * 3
+      return scoreB - scoreA
+    })
+
+    for (const file of sorted) {
+      const key = `openrouter-${file.relativePath}`
+      if (tried.has(key)) continue
+
+      let content: string
+      try {
+        content = await readFile(file.path, 'utf-8')
+      } catch {
+        continue
+      }
+
+      const lines = content.split('\n')
+      if (lines.length > 300) {
+        content = `${lines.slice(0, 300).join('\n')}\n// ... truncated ...`
+      }
+
+      const ext = extname(file.relativePath).slice(1)
+      const systemPrompt =
+        'You are OpenClaw operating as a careful coding hypothesis engine. Propose one small, safe, review-friendly code improvement.'
+      const goalSection = this.taskGoal ? `TASK GOAL:\n${this.taskGoal}\n\n` : ''
+      const planSection = this.planExcerpt ? `PLAN.MD EXCERPT:\n${this.planExcerpt}\n\n` : ''
+      const userPrompt = `${goalSection}${planSection}FILE: ${file.relativePath} (${file.lines} lines)
+ISSUES: ${file.consoleLogs} console.log, ${file.emptyCatches} empty catches, ${file.todos} TODOs, ${file.magicNumbers} magic numbers
+HEALTH SCORE: ${obs.score.overall}/100 (security:${obs.score.security} maintainability:${obs.score.maintainability} reliability:${obs.score.reliability} size:${obs.score.size})
+
+SOURCE:
+\`\`\`${ext}
+${content}
+\`\`\`
+
+Return JSON:
+{
+  "description": "one-line description",
+  "category": "maintainability" | "reliability" | "security",
+  "expectedDelta": <number 1-15>,
+  "search": "exact substring",
+  "replace": "replacement substring"
+}
+
+RULES:
+- one atomic change only
+- max 30 lines affected
+- no new dependencies
+- preserve behavior
+- no config or lockfile edits`
+
+      try {
+        const response = await fetch(`${this.baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${this.apiKey}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: this.model,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: userPrompt },
+            ],
+            temperature: 0.2,
+            response_format: { type: 'json_object' },
+          }),
+        })
+
+        if (!response.ok) {
+          continue
+        }
+
+        const data = (await response.json()) as {
+          choices?: Array<{ message?: { content?: string } }>
+        }
+        const raw = data.choices?.[0]?.message?.content
+        if (!raw) {
+          continue
+        }
+
+        const parsed = JSON.parse(raw) as {
+          description?: string
+          category?: string
+          expectedDelta?: number
+          search?: string
+          replace?: string
+        }
+
+        const validCategories = ['maintainability', 'reliability', 'security'] as const
+        const category =
+          validCategories.find((value) => value === parsed.category) ?? 'maintainability'
+        const expectedDelta = Math.max(1, Math.min(15, parsed.expectedDelta || 5))
+
+        return {
+          id: generateId(),
+          key,
+          description: parsed.description || `OpenRouter improvement for ${file.relativePath}`,
+          category,
+          expectedDelta,
+          targetFiles: [file.path],
+          patchFn: async (worktreePath: string) => {
+            const targetPath = join(worktreePath, file.relativePath)
+            let fileContent: string
+            try {
+              fileContent = await readFile(targetPath, 'utf-8')
+            } catch {
+              return { filesModified: 0, description: 'File not found' }
+            }
+
+            if (!parsed.search || !parsed.replace || !fileContent.includes(parsed.search)) {
+              return { filesModified: 0, description: 'Search string not found in file' }
+            }
+
+            const patched = fileContent.replace(parsed.search, parsed.replace)
+            const safety = validatePatch(file.relativePath, fileContent, patched)
+            if (!safety.safe) {
+              return { filesModified: 0, description: `Patch rejected: ${safety.reason}` }
+            }
+
+            await writeFile(targetPath, patched)
+            return { filesModified: 1, description: parsed.description ?? 'Applied LLM patch' }
+          },
+        }
+      } catch {
+        /* */
+      }
+    }
+
+    return null
   }
 }
 
@@ -849,14 +1043,34 @@ async function detectLLMMode(
   }
 
   if (config.mode === 'openclaw') {
-    // OpenClaw delegates to Ollama — check Ollama first
+    if (config.openRouterApiKey) {
+      return {
+        engine: new OpenClawEngine(
+          config.model,
+          config.ollamaUrl,
+          config.openRouterApiKey,
+          config.openRouterBaseUrl,
+          config.taskGoal,
+          config.planExcerpt,
+        ),
+        label: `OpenClaw → ${config.model} (OpenRouter backend)`,
+      }
+    }
+
     try {
       const resp = await fetch(`${config.ollamaUrl}/api/tags`, {
         signal: AbortSignal.timeout(3000),
       })
       if (resp.ok) {
         return {
-          engine: new OpenClawEngine(config.model, config.ollamaUrl),
+          engine: new OpenClawEngine(
+            config.model,
+            config.ollamaUrl,
+            undefined,
+            undefined,
+            config.taskGoal,
+            config.planExcerpt,
+          ),
           label: `OpenClaw → ${config.model} (Ollama backend, FREE)`,
         }
       }
@@ -1126,6 +1340,13 @@ export async function run(config: LoopConfig): Promise<LoopRunSummary> {
           `coco: ${hypothesis.description}\n\nKarpathy Loop experiment ${expId}\nScore: ${currentScore} → ${afterObs.score.overall} (+${delta})`,
         )
         const commitHash = commitResult.commit?.slice(0, 7) || 'unknown'
+        const patchArtifactPath = await writePatchArtifact(
+          projectPath,
+          git,
+          currentBranch,
+          branchName,
+          expId,
+        )
 
         if (mergeValidated) {
           await git.raw(['worktree', 'remove', '--force', worktreePath]).catch(() => {})
@@ -1152,6 +1373,7 @@ export async function run(config: LoopConfig): Promise<LoopRunSummary> {
           testsPassed,
           status: 'validated',
           commitHash,
+          ...(patchArtifactPath ? { patchArtifactPath } : {}),
           ...(mergeValidated ? {} : { branchName, worktreePath }),
           duration: Date.now() - roundStart,
         })

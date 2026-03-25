@@ -9,6 +9,7 @@ import {
   LLMRegistry,
   NullProvider,
   OllamaProvider,
+  OpenRouterProvider,
   listLLMPlugins,
   llmPackage,
   loadLLMProviderPlugins,
@@ -39,6 +40,20 @@ describe('@coco/llm', () => {
 
     await expect(registry.resolve()).resolves.toMatchObject({
       provider: 'ollama',
+    })
+  })
+
+  it('resolves explicit openclaw requests through openrouter when configured', async () => {
+    const registry = new LLMRegistry([
+      new NullProvider(),
+      new OpenRouterProvider('test-key', 'https://openrouter.example/api/v1', 'moonshotai/kimi-k2'),
+    ])
+
+    await expect(
+      registry.resolve({ provider: 'openclaw', model: 'moonshotai/kimi-k2' }),
+    ).resolves.toMatchObject({
+      provider: 'openclaw',
+      model: 'moonshotai/kimi-k2',
     })
   })
 

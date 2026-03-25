@@ -89,6 +89,7 @@ describe('@coco/doctor', () => {
       expect(report.findings.length).toBeGreaterThan(0)
       expect(report.prescriptions.length).toBeGreaterThan(0)
       expect(report.diagnoses.length).toBeGreaterThan(0)
+      expect(report.prescriptions.some((prescription) => prescription.patchPlan)).toBe(true)
     } finally {
       await rm(repoPath, { recursive: true, force: true })
     }

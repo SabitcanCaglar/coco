@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { readdir } from 'node:fs/promises'
 import { basename, extname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -91,6 +91,57 @@ function makePrescription(
   return prescription
 }
 
+function buildConsoleLogPatchPlan(
+  repo: RepoRef,
+  finding: DoctorFinding,
+  priority: Priority,
+): PatchPlan | undefined {
+  const operations = finding.targetFiles
+    .map((relativePath) => {
+      const absolutePath = join(repo.rootPath, relativePath)
+      const content = readFileSync(absolutePath, 'utf-8')
+      const nextContent = content
+        .split('\n')
+        .filter(
+          (line: string) => !line.includes('console.log(') && !line.includes('console.debug('),
+        )
+        .join('\n')
+
+      if (nextContent === content) {
+        return null
+      }
+
+      return {
+        path: relativePath,
+        operation: 'update' as const,
+        format: 'full-file' as const,
+        summary: 'Remove console logging statements from source.',
+        content: nextContent,
+      }
+    })
+    .filter((operation): operation is NonNullable<typeof operation> => Boolean(operation))
+
+  if (operations.length === 0) {
+    return undefined
+  }
+
+  return {
+    id: randomUUID(),
+    title: 'Remove console logging statements',
+    description: 'Apply a safe single-file cleanup that removes console logging from source files.',
+    rationale: finding.summary,
+    targetFiles: finding.targetFiles,
+    expectedScoreDelta: 2,
+    priority,
+    operations,
+    safetyChecks: [
+      'Require target paths to stay within the repository root.',
+      'Only allow update operations for existing source files.',
+      'Review resulting diff before applying to the main branch.',
+    ],
+  }
+}
+
 defineFrameworkExpert({
   framework: 'node-typescript',
   name: 'Node/TypeScript Expert',
@@ -109,7 +160,7 @@ defineFrameworkExpert({
           observation.files
             .filter((file) => file.metrics.consoleLogs > 0)
             .map((file) => file.relativePath),
-          ['node', 'typescript', 'maintainability'],
+          ['node', 'typescript', 'node-typescript', 'maintainability'],
         ),
       )
     }
@@ -124,7 +175,7 @@ defineFrameworkExpert({
           observation.files
             .filter((file) => file.metrics.lineCount > 200)
             .map((file) => file.relativePath),
-          ['node', 'typescript', 'size'],
+          ['node', 'typescript', 'node-typescript', 'size'],
         ),
       )
     }
@@ -132,15 +183,18 @@ defineFrameworkExpert({
     return findings
   },
   prescribe: (_context, findings) =>
-    findings.map((finding) =>
-      makePrescription(
+    findings.map((finding) => {
+      const priority = finding.severity === 'medium' ? 'high' : 'medium'
+      const patchPlan = buildConsoleLogPatchPlan(_context.repo, finding, priority)
+      return makePrescription(
         finding.title,
         finding.summary,
-        finding.severity === 'medium' ? 'high' : 'medium',
-        'experiment',
+        priority,
+        patchPlan ? 'autofix' : 'experiment',
         finding.targetFiles,
-      ),
-    ),
+        patchPlan,
+      )
+    }),
 })
 
 export async function loadFrameworkExpertPlugins(
@@ -318,6 +372,24 @@ async function detectLanguageHints(rootPath: string): Promise<string[]> {
   return [...hints].sort()
 }
 
+function detectObservationLanguageHints(files: ReadonlyArray<{ relativePath: string }>): string[] {
+  const hints = new Set<string>()
+  for (const file of files) {
+    const extension = extname(file.relativePath).replace('.', '')
+    if (extension) {
+      hints.add(extension)
+    }
+    if (
+      file.relativePath === 'Dockerfile' ||
+      file.relativePath.startsWith('docker/') ||
+      file.relativePath.includes('/Dockerfile')
+    ) {
+      hints.add('docker')
+    }
+  }
+  return [...hints].sort()
+}
+
 function deriveDiagnoses(findings: DoctorFinding[]): Diagnosis[] {
   const diagnoses: Diagnosis[] = []
   const securityFindings = findings.filter((finding) =>
@@ -371,12 +443,14 @@ export class DoctorRuntime {
 
   async examine(repo: RepoRef, _options: DoctorRuntimeOptions = {}): Promise<DoctorReport> {
     const observation = await observeProject(repo.rootPath)
+    const observedHints = detectObservationLanguageHints(observation.fileDetails)
+    const filesystemHints = observedHints.length > 0 ? [] : await detectLanguageHints(repo.rootPath)
     const enrichedRepo: RepoRef = {
       ...repo,
       languageHints:
         repo.languageHints.length > 0
           ? repo.languageHints
-          : await detectLanguageHints(repo.rootPath),
+          : [...new Set([...observedHints, ...filesystemHints])].sort(),
     }
 
     const context: FrameworkExpertContext = {

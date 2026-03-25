@@ -12,6 +12,11 @@ import { resolvePluginEntrypoints, validatePluginModule } from '@coco/core'
 
 const DEFAULT_OLLAMA_URL = 'http://127.0.0.1:11434'
 const DEFAULT_OLLAMA_MODEL = 'qwen3-coder:30b'
+const DEFAULT_OPENROUTER_URL = 'https://openrouter.ai/api/v1'
+
+function getDefaultOpenRouterModel(): string {
+  return process.env.COCO_OPENROUTER_MODEL ?? 'stepfun/step-3.5-flash:free'
+}
 
 export interface ProviderSelection {
   provider?: string
@@ -130,8 +135,93 @@ export class AnthropicProvider extends NullProvider {
   override readonly name = 'anthropic'
 }
 
+export class OpenRouterProvider implements LLMProviderContract {
+  readonly name = 'openrouter'
+  readonly models: ModelReference[]
+
+  constructor(
+    private readonly apiKey: string,
+    private readonly baseUrl = DEFAULT_OPENROUTER_URL,
+    defaultModel = getDefaultOpenRouterModel(),
+  ) {
+    this.models = [
+      {
+        provider: 'openrouter',
+        name: defaultModel,
+        family: defaultModel.split('/')[0] ?? defaultModel,
+        supportsJson: true,
+        supportsTools: false,
+      },
+    ]
+  }
+
+  async generate(request: LLMRequest): Promise<LLMResponse> {
+    const model = this.models[0] ?? NULL_MODEL
+    const response = await fetch(`${this.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${this.apiKey}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: model.name,
+        messages: [
+          ...(request.systemPrompt ? [{ role: 'system', content: request.systemPrompt }] : []),
+          ...request.messages.map((message) => ({
+            role: message.role,
+            content: message.content,
+          })),
+        ],
+        temperature: request.temperature ?? 0.2,
+        max_tokens: request.maxOutputTokens,
+        response_format: request.responseFormat === 'json' ? { type: 'json_object' } : undefined,
+      }),
+    })
+
+    if (!response.ok) {
+      return {
+        model,
+        content: `OpenRouter request failed with status ${response.status}`,
+        finishReason: 'error',
+      }
+    }
+
+    const payload = (await response.json()) as {
+      choices?: Array<{
+        message?: { content?: string }
+        finish_reason?: 'stop' | 'length' | 'tool_calls'
+      }>
+      usage?: {
+        prompt_tokens?: number
+        completion_tokens?: number
+        total_tokens?: number
+      }
+    }
+    const choice = payload.choices?.[0]
+    return {
+      model,
+      content: choice?.message?.content ?? '',
+      finishReason:
+        choice?.finish_reason === 'tool_calls'
+          ? 'tool-call'
+          : choice?.finish_reason === 'length'
+            ? 'length'
+            : 'stop',
+      ...(payload.usage
+        ? {
+            usage: {
+              input: payload.usage.prompt_tokens ?? 0,
+              output: payload.usage.completion_tokens ?? 0,
+              total: payload.usage.total_tokens ?? 0,
+            },
+          }
+        : {}),
+    }
+  }
+}
+
 function builtInProviderPlugins(): LLMProviderPlugin[] {
-  return [
+  const plugins: LLMProviderPlugin[] = [
     {
       manifest: {
         name: '@coco/provider-null',
@@ -155,6 +245,22 @@ function builtInProviderPlugins(): LLMProviderPlugin[] {
       provider: new OllamaProvider(),
     },
   ]
+
+  if (process.env.OPENROUTER_API_KEY) {
+    plugins.push({
+      manifest: {
+        name: '@coco/provider-openrouter',
+        version: '0.1.0',
+        kind: 'llm-provider',
+        source: 'builtin',
+        capabilities: ['llm-generate', 'openrouter'],
+        description: 'OpenRouter provider for remote coding models.',
+      },
+      provider: new OpenRouterProvider(process.env.OPENROUTER_API_KEY),
+    })
+  }
+
+  return plugins
 }
 
 export async function loadLLMProviderPlugins(pluginPaths: string[]): Promise<LLMProviderPlugin[]> {
@@ -222,7 +328,9 @@ export class LLMRegistry {
   async resolve(selection: ProviderSelection = {}): Promise<ProviderResolution> {
     await this.ensureExternalPluginsLoaded()
     if (selection.provider) {
-      const explicit = this.providers.get(selection.provider)
+      const explicitProviderName =
+        selection.provider === 'openclaw' ? 'openrouter' : selection.provider
+      const explicit = this.providers.get(explicitProviderName)
       if (!explicit) {
         return {
           provider: 'null',
@@ -233,9 +341,9 @@ export class LLMRegistry {
 
       const model = selection.model ?? explicit.models[0]?.name ?? NULL_MODEL.name
       return {
-        provider: explicit.name,
+        provider: selection.provider === 'openclaw' ? 'openclaw' : explicit.name,
         model,
-        reason: `Using explicitly requested provider "${explicit.name}".`,
+        reason: `Using explicitly requested provider "${selection.provider}".`,
       }
     }
 
@@ -259,7 +367,8 @@ export class LLMRegistry {
   async generate(request: LLMRequest, selection: ProviderSelection = {}): Promise<LLMResponse> {
     await this.ensureExternalPluginsLoaded()
     const resolution = await this.resolve(selection)
-    const provider = this.providers.get(resolution.provider) ?? this.providers.get('null')
+    const providerName = resolution.provider === 'openclaw' ? 'openrouter' : resolution.provider
+    const provider = this.providers.get(providerName) ?? this.providers.get('null')
     if (!provider) {
       throw new Error('No LLM providers are registered.')
     }
