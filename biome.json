@@ -29,6 +29,13 @@
     }
   },
   "files": {
-    "ignore": ["node_modules", "dist", "*.d.ts", ".coco"]
+    "ignore": [
+      "node_modules",
+      "dist",
+      "*.d.ts",
+      ".coco",
+      ".docker-data",
+      "packages/theia-browser-app/**"
+    ]
   }
 }

@@ -6,8 +6,13 @@
     { "path": "./packages/doctor" },
     { "path": "./packages/review" },
     { "path": "./packages/loop" },
+    { "path": "./packages/openclaw-supervisor" },
+    { "path": "./packages/openclaw-agent" },
+    { "path": "./packages/theia" },
+    { "path": "./packages/theia-electron-app" },
     { "path": "./packages/cli" },
     { "path": "./packages/worker" },
-    { "path": "./packages/orchestrator" }
+    { "path": "./packages/orchestrator" },
+    { "path": "./packages/telegram" }
   ]
 }

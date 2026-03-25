@@ -1,0 +1,20 @@
+{
+  "name": "@coco/theia-electron-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/main.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty false",
+    "start": "electron dist/main.js"
+  },
+  "dependencies": {
+    "@coco/core": "workspace:*",
+    "@coco/openclaw-supervisor": "workspace:*",
+    "@coco/orchestrator": "workspace:*",
+    "@coco/theia": "workspace:*",
+    "electron": "^37.2.3"
+  }
+}

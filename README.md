@@ -218,6 +218,9 @@ pnpm install
 ### Local Maintainer Runtime
 
 ```bash
+cp .env.example .env
+# paste your OPENROUTER_API_KEY into .env if you want remote coding models
+
 # Register a repo
 pnpm --filter @coco/cli exec coco repo add .
 
@@ -227,12 +230,134 @@ pnpm --filter @coco/cli exec coco doctor run . --json
 # Run one review-first loop experiment
 pnpm --filter @coco/cli exec coco loop run . --rounds 1 --provider null --json
 
+# Run one remote OpenRouter/OpenClaw experiment with StepFun Step 3.5 Flash Free
+pnpm --filter @coco/cli exec coco loop run . \
+  --rounds 1 \
+  --provider openclaw \
+  --model stepfun/step-3.5-flash:free \
+  --json
+
 # Review the current repo
 pnpm --filter @coco/cli exec coco review run . --json
 
 # Start the loopback-only daemon
-pnpm --filter @coco/cli exec coco daemon start
+pnpm --filter @coco/cli exec coco daemon start --parallel 4
+
+# Queue multiple repos for unattended background work
+pnpm --filter @coco/cli exec coco loop fanout ../repo-a ../repo-b ../repo-c \
+  --provider openclaw \
+  --model stepfun/step-3.5-flash:free \
+  --json
+
+# Inspect daemon jobs
+pnpm --filter @coco/cli exec coco jobs list --json
 ```
+
+### Theia IDE (First Vertical Slice)
+
+`coco` now includes the first Theia-facing packages for the medium-term OSS IDE direction:
+
+- `@coco/theia` — shared Theia extension package with:
+  - `OpenClaw Chat` view
+  - `Task Monitor` view
+  - shared workbench blueprint helpers
+- `@coco/theia-browser-app` — browser app manifest that can host the Coco Theia extension
+
+Current goal of this slice:
+- reuse the shared OpenClaw supervisor
+- surface live `/tasks`, `/workers`, and `/sessions` in a proper IDE shell
+- keep chat, monitoring, and code editing in one open-source workbench
+
+Useful commands:
+
+```bash
+# Build the shared Theia extension package
+pnpm --filter @coco/theia build
+
+# Bundle the browser app shell
+pnpm theia:bundle
+
+# Start Coco IDE on http://127.0.0.1:3001
+pnpm theia:start
+```
+
+This is the first IDE slice, not the final product. It gives us the shared extension surface
+for chat-first orchestration and monitoring; host-native execution, richer diff/review UX, and
+desktop packaging come next.
+
+### Unattended macOS Background Run
+
+If you want `coco` to keep working while you are away from the keyboard, install the daemon as a `launchd` agent on macOS:
+
+```bash
+cp .env.example .env
+# paste your OPENROUTER_API_KEY into .env
+
+pnpm --filter @coco/cli exec coco daemon install-launchd --parallel 4
+launchctl list | rg coco
+```
+
+You can inspect the generated plist before installing it:
+
+```bash
+pnpm --filter @coco/cli exec coco daemon print-launchd --parallel 4
+```
+
+Notes:
+- The daemon reads `.env` automatically from the working directory, or from `COCO_ENV_FILE` if set.
+- Local background execution still stops if the machine goes to sleep.
+- For true 24/7 unattended coding, run the daemon on an always-on Mac mini, server, or cloud VM.
+
+### Telegram Bot Control
+
+You can drive `coco` remotely from your phone through Telegram. The bot talks to the local daemon and keeps a lightweight per-chat session with:
+
+- active repo
+- default provider
+- default model
+
+Environment:
+
+```bash
+cp .env.example .env
+# paste TELEGRAM_BOT_TOKEN and OPENROUTER_API_KEY into .env
+```
+
+Run locally:
+
+```bash
+pnpm --filter @coco/telegram build
+node packages/telegram/dist/index.js
+```
+
+Key Telegram commands:
+
+```text
+/help
+/repos
+/repoadd /absolute/path/to/repo
+/use repo-name-or-id
+/provider openclaw
+/model stepfun/step-3.5-flash:free
+/repoadd /host-home/Desktop/my-app
+postgres-dev containerini restart et
+/doctor
+/loop
+/fanout repo-a repo-b repo-c
+/jobs
+/job <job-id>
+/session
+```
+
+Docker profile:
+
+```bash
+docker compose --profile bot up -d orchestrator telegram-bot
+```
+
+Recommended:
+- set `TELEGRAM_ALLOWED_CHAT_IDS` to your own chat id(s)
+- keep repos registered on the host first if you prefer not to send absolute paths through Telegram
 
 ### Karpathy Loop (Working Now)
 

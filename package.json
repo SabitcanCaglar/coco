@@ -9,6 +9,11 @@
   "scripts": {
     "loop": "tsx packages/loop/src/karpathy-loop.ts",
     "build": "pnpm -r build",
+    "theia:desktop:build": "pnpm --filter @coco/theia-electron-app build",
+    "theia:desktop:start": "pnpm --filter @coco/theia-electron-app start",
+    "theia:bundle": "pnpm --filter @coco/theia-browser-app bundle",
+    "theia:start": "pnpm --filter @coco/theia-browser-app start",
+    "smoke:runtime": "node scripts/runtime-smoke.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "biome check .",
@@ -18,6 +23,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "@types/react": "^18.3.12",
     "@biomejs/biome": "^1.9.0",
     "@vitest/coverage-v8": "^2.0.0",
     "tsx": "^4.19.0",
@@ -28,6 +34,6 @@
     "simple-git": "^3.27.0"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["@biomejs/biome", "esbuild"]
+    "onlyBuiltDependencies": ["@biomejs/biome", "drivelist", "electron", "esbuild", "node-pty"]
   }
 }
