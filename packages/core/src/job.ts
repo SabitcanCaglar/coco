@@ -21,6 +21,11 @@ export interface LoopJobPayload {
   dryRun?: boolean
   goal?: string
   planExcerpt?: string
+  sessionId?: string
+  managedRepoId?: string
+  milestoneTarget?: string
+  executionSurface?: 'aider' | 'roo' | 'openclaw'
+  successCriteria?: string
 }
 
 export type JobPayload = DoctorJobPayload | LoopJobPayload

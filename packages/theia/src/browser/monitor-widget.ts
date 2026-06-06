@@ -2,7 +2,15 @@ import { ReactWidget } from '@theia/core/lib/browser/index.js'
 import { injectable, postConstruct } from 'inversify'
 import * as React from 'react'
 
-import type { DesktopRuntimeStatus, SessionInfo, Task, WorkerInfo } from '@coco/core'
+import type {
+  ApprovalQueueItem,
+  DesktopRuntimeStatus,
+  RepoExecutionProfile,
+  SessionInfo,
+  Task,
+  WorkerInfo,
+  WorkspaceSession,
+} from '@coco/core'
 
 import {
   choosePrimaryTask,
@@ -17,6 +25,9 @@ interface SnapshotState {
   tasks: Task[]
   workers: WorkerInfo[]
   sessions: SessionInfo[]
+  approvals: ApprovalQueueItem[]
+  repoProfiles: RepoExecutionProfile[]
+  workspaceSession?: WorkspaceSession | undefined
   statusLine: string
 }
 
@@ -30,6 +41,9 @@ export class CocoMonitorWidget extends ReactWidget {
     tasks: [],
     workers: [],
     sessions: [],
+    approvals: [],
+    repoProfiles: [],
+    workspaceSession: undefined,
     statusLine: 'Connecting to orchestrator...',
   }
 
@@ -61,8 +75,12 @@ export class CocoMonitorWidget extends ReactWidget {
 
   protected async refresh(): Promise<void> {
     try {
-      const { runtime, tasks, workers, sessions } =
+      const { runtime, tasks, workers, sessions, approvals } =
         await this.runtimeService.daemonClient.snapshot()
+      const repoProfiles = await this.runtimeService.getRepoProfiles().catch(() => [])
+      const workspaceSession = await this.runtimeService
+        .getWorkspaceSession('theia')
+        .catch(() => undefined)
       const primaryTask = choosePrimaryTask(tasks)
       if (primaryTask && !this.runtimeService.getSelectedTaskId()) {
         this.runtimeService.setSelectedTask(primaryTask.id)
@@ -72,11 +90,15 @@ export class CocoMonitorWidget extends ReactWidget {
         tasks,
         workers,
         sessions,
+        approvals: approvals ?? [],
+        repoProfiles,
+        workspaceSession,
         statusLine: summarizeMonitorSnapshot({
           runtime,
           tasks,
           workers,
           sessions,
+          approvals: approvals ?? [],
         }),
       }
     } catch (error) {
@@ -86,6 +108,9 @@ export class CocoMonitorWidget extends ReactWidget {
         tasks: [],
         workers: [],
         sessions: [],
+        approvals: [],
+        repoProfiles: [],
+        workspaceSession: undefined,
         statusLine: `Orchestrator unreachable: ${message}`,
       }
     }
@@ -120,6 +145,22 @@ export class CocoMonitorWidget extends ReactWidget {
         React.createElement('div', {}, `Tasks: ${this.snapshot.tasks.length}`),
         React.createElement('div', {}, `Workers: ${this.snapshot.workers.length}`),
         React.createElement('div', {}, `Sessions: ${this.snapshot.sessions.length}`),
+        React.createElement('div', {}, `Approvals: ${this.snapshot.approvals.length}`),
+        React.createElement('div', {}, `Repo profiles: ${this.snapshot.repoProfiles.length}`),
+        React.createElement(
+          'div',
+          {},
+          `Workspace focus: ${
+            this.snapshot.workspaceSession?.managedRepos.find(
+              (repo) => repo.repoId === this.snapshot.workspaceSession?.focusRepoId,
+            )?.rootPath ?? 'none'
+          }`,
+        ),
+        React.createElement(
+          'div',
+          {},
+          `Review: ${this.snapshot.workspaceSession?.lastReviewDecision ?? 'n/a'}`,
+        ),
         React.createElement(
           'div',
           {},
@@ -139,12 +180,26 @@ export class CocoMonitorWidget extends ReactWidget {
           },
         },
         this.snapshot.tasks.length === 0
-          ? 'No active tasks yet.'
+          ? [
+              'No active tasks yet.',
+              ...this.snapshot.approvals.map(
+                (approval) =>
+                  `APPROVAL · ${approval.stepClass} · ${approval.goal} · ${approval.runnerType ?? 'runner n/a'}`,
+              ),
+            ]
+              .filter(Boolean)
+              .join('\n')
           : this.snapshot.tasks
               .map((task) => {
                 const pointer = this.runtimeService.getSelectedTaskId() === task.id ? '>' : '-'
                 return `${pointer} ${normalizeTaskHeadline(task)}`
               })
+              .concat(
+                this.snapshot.approvals.map(
+                  (approval) =>
+                    `! APPROVAL · ${approval.stepClass} · ${approval.goal} · ${approval.runnerType ?? 'runner n/a'}`,
+                ),
+              )
               .join('\n'),
       ),
     )

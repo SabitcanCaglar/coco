@@ -6,10 +6,13 @@ import { describe, expect, it } from 'vitest'
 
 import {
   COMMAND_DISPOSITIONS,
+  APPROVAL_MODES,
+  type ApprovalQueueItem,
   DEFAULT_COMMAND_POLICY,
   DEFAULT_SCORING_MODEL,
   DOCTOR_PHASES,
   LOOP_MODES,
+  MISSION_STATUSES,
   PATCH_FORMATS,
   PATCH_OPERATIONS,
   PLUGIN_ENTRY_EXTENSIONS,
@@ -40,6 +43,8 @@ describe('@coco/core', () => {
     expect(TASK_MODES).toContain('autopilot')
     expect(TASK_STATUSES).toContain('blocked')
     expect(WORKER_KINDS).toContain('fix-worker')
+    expect(MISSION_STATUSES).toContain('blocked')
+    expect(APPROVAL_MODES).toContain('mixed')
   })
 
   it('ships a default scoring model and command policy', () => {
@@ -88,6 +93,22 @@ describe('@coco/core', () => {
 
     expect(task.mode).toBe('analyze')
     expect(task.status).toBe('queued')
+  })
+
+  it('exports mission approval queue contracts', () => {
+    const item: ApprovalQueueItem = {
+      missionId: 'mission-1',
+      stepId: 'step-1',
+      threadId: 'thread-1',
+      goal: 'run migration',
+      stepClass: 'migration',
+      repoId: 'repo-1',
+      runnerType: 'csharp-worker',
+      summary: 'Approval required before migration step can proceed.',
+      createdAt: new Date().toISOString(),
+    }
+    expect(item.stepClass).toBe('migration')
+    expect(item.runnerType).toBe('csharp-worker')
   })
 
   it('resolves plugin entrypoints from directories', async () => {

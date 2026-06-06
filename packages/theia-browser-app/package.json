@@ -9,17 +9,23 @@
   },
   "dependencies": {
     "@coco/theia": "workspace:*",
+    "@vscode/ripgrep": "^1.15.14",
     "@theia/application-package": "latest",
     "@theia/core": "latest",
     "@theia/editor": "latest",
     "@theia/filesystem": "latest",
+    "@theia/file-search": "latest",
+    "@theia/markers": "latest",
     "@theia/messages": "latest",
     "@theia/monaco": "latest",
     "@theia/monaco-editor-core": "latest",
     "@theia/navigator": "latest",
+    "@theia/outline-view": "latest",
     "@theia/preferences": "latest",
     "@theia/process": "latest",
     "@theia/terminal": "latest",
+    "@theia/userstorage": "latest",
+    "@theia/variable-resolver": "latest",
     "@theia/workspace": "latest",
     "reflect-metadata": "^0.2.2"
   },
@@ -27,7 +33,8 @@
     "@theia/cli": "latest",
     "css-loader": "^7.1.2",
     "source-map-loader": "^5.0.0",
-    "style-loader": "^4.0.0"
+    "style-loader": "^4.0.0",
+    "umd-compat-loader": "^2.1.1"
   },
   "theia": {
     "frontend": {

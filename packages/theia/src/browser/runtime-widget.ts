@@ -3,9 +3,9 @@ import type { MessageService } from '@theia/core/lib/common/index.js'
 import { injectable, postConstruct } from 'inversify'
 import * as React from 'react'
 
-import type { DesktopRuntimeStatus } from '@coco/core'
+import type { DesktopRuntimeStatus, WorkspaceSession } from '@coco/core'
 
-import { formatRuntimeLine } from '../common/model.js'
+import { formatRuntimeLine, summarizeWorkspaceSession } from '../common/model.js'
 import type { CocoRuntimeService } from './runtime-service.js'
 
 @injectable()
@@ -14,6 +14,7 @@ export class CocoRuntimeWidget extends ReactWidget {
   static readonly LABEL = 'Runtime Status'
 
   protected runtime!: DesktopRuntimeStatus
+  protected workspaceSession: WorkspaceSession | undefined
 
   protected daemonUrlInput = ''
   protected timer: NodeJS.Timeout | undefined
@@ -55,6 +56,7 @@ export class CocoRuntimeWidget extends ReactWidget {
 
   protected async refresh(): Promise<void> {
     this.runtime = await this.runtimeService.getRuntimeStatus()
+    this.workspaceSession = await this.runtimeService.getWorkspaceSession('theia').catch(() => undefined)
     this.update()
   }
 
@@ -73,6 +75,22 @@ export class CocoRuntimeWidget extends ReactWidget {
     void this.refresh()
   }
 
+  protected async discoverWorkspace(): Promise<void> {
+    await this.runtimeService.discoverWorkspaceRepos('theia').catch((error) => {
+      const message = error instanceof Error ? error.message : String(error)
+      this.messageService.error(message)
+    })
+    await this.refresh()
+  }
+
+  protected async controlWorkspace(action: 'pause' | 'resume'): Promise<void> {
+    await this.runtimeService.controlWorkspaceSession('theia', { action }).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error)
+      this.messageService.error(message)
+    })
+    await this.refresh()
+  }
+
   protected render(): React.ReactNode {
     return React.createElement(
       'div',
@@ -88,6 +106,7 @@ export class CocoRuntimeWidget extends ReactWidget {
       React.createElement('div', { style: { fontWeight: 700 } }, 'Desktop runtime'),
       React.createElement('div', {}, formatRuntimeLine(this.runtime)),
       React.createElement('div', {}, this.runtime.message),
+      React.createElement('div', {}, summarizeWorkspaceSession(this.workspaceSession)),
       React.createElement(
         'div',
         { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
@@ -100,6 +119,21 @@ export class CocoRuntimeWidget extends ReactWidget {
           'button',
           { type: 'button', onClick: () => void this.switchMode('external') },
           'Use external daemon',
+        ),
+        React.createElement(
+          'button',
+          { type: 'button', onClick: () => void this.discoverWorkspace() },
+          'Discover repos',
+        ),
+        React.createElement(
+          'button',
+          { type: 'button', onClick: () => void this.controlWorkspace('pause') },
+          'Pause session',
+        ),
+        React.createElement(
+          'button',
+          { type: 'button', onClick: () => void this.controlWorkspace('resume') },
+          'Resume session',
         ),
       ),
       React.createElement('input', {

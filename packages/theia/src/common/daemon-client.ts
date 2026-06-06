@@ -1,10 +1,15 @@
 import type {
   DesktopRuntimeStatus,
+  Mission,
+  MissionEvent,
   MonitorEvent,
+  ApprovalQueueItem,
+  RepoExecutionProfile,
   SessionInfo,
   Task,
   TaskControlAction,
   WorkerInfo,
+  WorkspaceSession,
 } from '@coco/core'
 
 import { defaultTheiaOrchestratorUrl } from './model.js'
@@ -20,6 +25,19 @@ export interface DaemonClientSnapshot {
   tasks: Task[]
   workers: WorkerInfo[]
   sessions: SessionInfo[]
+  missions?: Mission[] | undefined
+  approvals?: ApprovalQueueItem[] | undefined
+}
+
+export interface ThreadSnapshot {
+  threadId: string
+  messages: Array<{
+    id: string
+    role: 'user' | 'assistant'
+    text: string
+    createdAt: string
+    missionId?: string | undefined
+  }>
 }
 
 function now(): string {
@@ -65,6 +83,9 @@ export function createDaemonClient(config: DaemonClientConfig = {}) {
   }
 
   return {
+    async requestThread(threadId: string): Promise<ThreadSnapshot> {
+      return request<ThreadSnapshot>(`/threads/${encodeURIComponent(threadId)}`)
+    },
     getBaseUrl(): string {
       return baseUrl
     },
@@ -107,14 +128,70 @@ export function createDaemonClient(config: DaemonClientConfig = {}) {
     async getSessions(): Promise<SessionInfo[]> {
       return request<SessionInfo[]>('/sessions')
     },
+    async getMissions(): Promise<Mission[]> {
+      return request<Mission[]>('/missions')
+    },
+    async getApprovals(): Promise<ApprovalQueueItem[]> {
+      return request<ApprovalQueueItem[]>('/approvals')
+    },
+    async approveMission(missionId: string, payload: Record<string, unknown>): Promise<Mission> {
+      return request<Mission>(`/approvals/${missionId}/approve`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+    },
+    async getRepoProfiles(): Promise<RepoExecutionProfile[]> {
+      return request<RepoExecutionProfile[]>('/repo-profiles')
+    },
+    async getMission(missionId: string): Promise<Mission> {
+      return request<Mission>(`/missions/${missionId}`)
+    },
+    async getMissionEvents(missionId: string): Promise<MissionEvent[]> {
+      return request<MissionEvent[]>(`/missions/${missionId}/events`)
+    },
+    async postThreadMessage(
+      threadId: string,
+      payload: Record<string, unknown>,
+    ): Promise<{ reply: string; mission?: Mission | undefined }> {
+      return request<{ reply: string; mission?: Mission | undefined }>(
+        `/threads/${encodeURIComponent(threadId)}/messages`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload),
+        },
+      )
+    },
+    async getWorkspaceSession(sessionId: string): Promise<WorkspaceSession> {
+      return request<WorkspaceSession>(`/sessions/${sessionId}`)
+    },
+    async discoverWorkspaceRepos(sessionId: string): Promise<WorkspaceSession> {
+      return request<WorkspaceSession>(`/sessions/${sessionId}/discover`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+    },
+    async controlWorkspaceSession(
+      sessionId: string,
+      payload: Record<string, unknown>,
+    ): Promise<WorkspaceSession> {
+      return request<WorkspaceSession>(`/sessions/${sessionId}/control`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+    },
     async snapshot(): Promise<DaemonClientSnapshot> {
       const runtime = await this.getRuntimeStatus()
-      const [tasks, workers, sessions] = await Promise.all([
+      const [tasks, workers, sessions, approvals] = await Promise.all([
         this.getTasks(),
         this.getWorkers(),
         this.getSessions(),
+        this.getApprovals().catch(() => []),
       ])
-      return { runtime, tasks, workers, sessions }
+      return { runtime, tasks, workers, sessions, approvals }
     },
     async controlTask(taskId: string, action: TaskControlAction): Promise<Task> {
       return request<Task>(`/tasks/${taskId}/${action}`, {

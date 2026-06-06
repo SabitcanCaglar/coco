@@ -157,26 +157,54 @@ export class OpenRouterProvider implements LLMProviderContract {
 
   async generate(request: LLMRequest): Promise<LLMResponse> {
     const model = this.models[0] ?? NULL_MODEL
-    const response = await fetch(`${this.baseUrl}/chat/completions`, {
+    const requestPayload = {
+      model: model.name,
+      messages: [
+        ...(request.systemPrompt ? [{ role: 'system', content: request.systemPrompt }] : []),
+        ...request.messages.map((message) => ({
+          role: message.role,
+          content: message.content,
+        })),
+      ],
+      temperature: request.temperature ?? 0.2,
+      max_tokens: request.maxOutputTokens,
+    }
+
+    let response = await fetch(`${this.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
         authorization: `Bearer ${this.apiKey}`,
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: model.name,
-        messages: [
-          ...(request.systemPrompt ? [{ role: 'system', content: request.systemPrompt }] : []),
-          ...request.messages.map((message) => ({
-            role: message.role,
-            content: message.content,
-          })),
-        ],
-        temperature: request.temperature ?? 0.2,
-        max_tokens: request.maxOutputTokens,
+        ...requestPayload,
         response_format: request.responseFormat === 'json' ? { type: 'json_object' } : undefined,
       }),
     })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      if (
+        request.responseFormat === 'json' &&
+        response.status === 405 &&
+        errorText.toLowerCase().includes('json_object')
+      ) {
+        response = await fetch(`${this.baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${this.apiKey}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify(requestPayload),
+        })
+      } else {
+        return {
+          model,
+          content: `OpenRouter request failed with status ${response.status}`,
+          finishReason: 'error',
+        }
+      }
+    }
 
     if (!response.ok) {
       return {

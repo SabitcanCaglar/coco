@@ -3,14 +3,16 @@ import type { MessageService } from '@theia/core/lib/common/index.js'
 import { injectable, postConstruct } from 'inversify'
 import * as React from 'react'
 
-import type { MonitorEvent, Task, TaskStatus, TaskStep } from '@coco/core'
+import type { Mission, MissionEvent, MonitorEvent, Task, TaskStatus, TaskStep } from '@coco/core'
 
 import type { CocoRuntimeService } from './runtime-service.js'
 
 interface TaskDetailState {
   task?: Task | undefined
+  mission?: Mission | undefined
   steps: TaskStep[]
   events: MonitorEvent[]
+  missionEvents: MissionEvent[]
   statusLine: string
 }
 
@@ -22,6 +24,7 @@ export class CocoTimelineWidget extends ReactWidget {
   protected state: TaskDetailState = {
     steps: [],
     events: [],
+    missionEvents: [],
     statusLine: 'Bir task secildiginde detaylari burada gosterilecek.',
   }
 
@@ -56,30 +59,49 @@ export class CocoTimelineWidget extends ReactWidget {
 
   protected async refresh(): Promise<void> {
     const taskId = this.runtimeService.getSelectedTaskId()
-    if (!taskId) {
+    const missionId = this.runtimeService.getSelectedMissionId()
+    if (!taskId && !missionId) {
       this.state = {
         task: undefined,
+        mission: undefined,
         steps: [],
         events: [],
+        missionEvents: [],
         statusLine: 'Bir task secildiginde detaylari burada gosterilecek.',
       }
       this.update()
       return
     }
     try {
-      const detail = await this.runtimeService.daemonClient.getTask(taskId)
-      this.state = {
-        task: detail.task,
-        steps: detail.steps as TaskStep[],
-        events: detail.events,
-        statusLine: detail.task.latestSummary ?? detail.task.goal,
+      if (taskId) {
+        const detail = await this.runtimeService.daemonClient.getTask(taskId)
+        this.state = {
+          task: detail.task,
+          mission: missionId ? await this.runtimeService.getMission(missionId) : undefined,
+          steps: detail.steps as TaskStep[],
+          events: detail.events,
+          missionEvents: missionId ? await this.runtimeService.getMissionEvents(missionId) : [],
+          statusLine: detail.task.latestSummary ?? detail.task.goal,
+        }
+      } else if (missionId) {
+        const mission = await this.runtimeService.getMission(missionId)
+        this.state = {
+          task: undefined,
+          mission,
+          steps: [],
+          events: [],
+          missionEvents: await this.runtimeService.getMissionEvents(missionId),
+          statusLine: mission.checkpointSummary ?? mission.goal,
+        }
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       this.state = {
         task: undefined,
+        mission: undefined,
         steps: [],
         events: [],
+        missionEvents: [],
         statusLine: `Task detaylari alinamadi: ${message}`,
       }
     }
@@ -112,6 +134,7 @@ export class CocoTimelineWidget extends ReactWidget {
 
   protected render(): React.ReactNode {
     const task = this.state.task
+    const mission = this.state.mission
     return React.createElement(
       'div',
       {
@@ -123,8 +146,30 @@ export class CocoTimelineWidget extends ReactWidget {
           height: '100%',
         },
       },
-      React.createElement('div', { style: { fontWeight: 700 } }, 'Task detail and timeline'),
+      React.createElement('div', { style: { fontWeight: 700 } }, 'Task and mission timeline'),
       React.createElement('div', {}, this.state.statusLine),
+      mission
+        ? React.createElement(
+            'div',
+            {
+              style: {
+                border: '1px solid var(--theia-editorWidget-border)',
+                borderRadius: '8px',
+                padding: '8px',
+                whiteSpace: 'pre-wrap',
+                overflow: 'auto',
+              },
+            },
+            [
+              `Mission: ${mission.status} · ${mission.currentPhase}`,
+              ...(mission.blockedReason ? [`Blocked: ${mission.blockedReason}`] : []),
+              'Mission Events:',
+              ...this.state.missionEvents
+                .slice(-8)
+                .map((event) => `- ${event.eventType} · ${JSON.stringify(event.payload)}`),
+            ].join('\n'),
+          )
+        : null,
       task
         ? React.createElement(
             React.Fragment,

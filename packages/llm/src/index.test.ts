@@ -67,6 +67,64 @@ describe('@coco/llm', () => {
     expect(response.content).toContain('llm-unavailable')
   })
 
+  it('retries OpenRouter requests without json mode when the model rejects json_object', async () => {
+    const originalFetch = globalThis.fetch
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            error: {
+              message: 'Provider returned error',
+              code: 405,
+              metadata: {
+                raw: '{"detail":"json_object response format is not supported for model"}',
+              },
+            },
+          }),
+          { status: 405, headers: { 'content-type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: '{"reply":"merhaba","queue":"none"}' }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+      )
+
+    globalThis.fetch = fetchMock as typeof fetch
+    try {
+      const provider = new OpenRouterProvider(
+        'test-key',
+        'https://openrouter.example/api/v1',
+        'stepfun/step-3.5-flash',
+      )
+      const response = await provider.generate({
+        systemPrompt: 'Return strict JSON only.',
+        messages: [{ role: 'user', content: 'hello' }],
+        responseFormat: 'json',
+      })
+
+      expect(response.finishReason).toBe('stop')
+      expect(response.content).toContain('"reply":"merhaba"')
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+
+      const firstBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body ?? '{}')) as {
+        response_format?: unknown
+      }
+      const secondBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body ?? '{}')) as {
+        response_format?: unknown
+      }
+      expect(firstBody.response_format).toEqual({ type: 'json_object' })
+      expect(secondBody.response_format).toBeUndefined()
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
   it('loads external provider plugins from file paths', async () => {
     const pluginDir = await mkdtemp(join(tmpdir(), 'coco-llm-plugin-'))
     const pluginPath = join(pluginDir, 'provider.mjs')

@@ -6,6 +6,7 @@ import { type SupervisorSessionState, createSupervisor } from '@coco/openclaw-su
 import { buildWorkbenchBlueprint } from '@coco/theia'
 import { createDaemonClient } from '@coco/theia'
 
+import { buildAgentOverlayScript } from './overlay.js'
 import { createDesktopRuntimeManager } from './runtime.js'
 
 const runtime = createDesktopRuntimeManager()
@@ -25,6 +26,11 @@ async function ensureRuntime() {
 
 ipcMain.handle('coco.runtime.status', async () => {
   return runtime.getStatus()
+})
+
+ipcMain.handle('coco.boot.status', async () => {
+  await ensureRuntime()
+  return runtime.getBootStatus()
 })
 
 ipcMain.handle('coco.runtime.mode', async (_event, mode: 'embedded' | 'external') => {
@@ -78,9 +84,12 @@ async function createWindow(): Promise<void> {
     },
     title: 'Coco IDE',
   })
-  const status = await runtime.start()
-  const blueprint = buildWorkbenchBlueprint()
-  const html = `<!doctype html>
+
+  async function loadFallback(): Promise<void> {
+    const status = runtime.getStatus()
+    const blueprint = buildWorkbenchBlueprint()
+    const boot = runtime.getBootStatus()
+    const html = `<!doctype html>
   <html lang="en">
     <head>
       <meta charset="utf-8" />
@@ -89,13 +98,35 @@ async function createWindow(): Promise<void> {
     <body>
       <script>window.__COCO_BOOTSTRAP__ = ${JSON.stringify({
         productName: blueprint.productName,
+        boot,
         runtime: status,
         panels: blueprint.panels,
       })}</script>
       <script type="module" src="file://${join(import.meta.dirname, 'renderer.js').replaceAll('\\', '/')}"></script>
     </body>
   </html>`
-  await window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+    await window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+  }
+
+  await loadFallback()
+  window.show()
+
+  window.webContents.on('did-finish-load', () => {
+    const currentUrl = window.webContents.getURL()
+    if (!currentUrl.startsWith('http://127.0.0.1:3011')) {
+      return
+    }
+    void window.webContents.executeJavaScript(buildAgentOverlayScript())
+  })
+
+  const status = await runtime.start()
+  const boot = runtime.getBootStatus()
+  if (boot.theia.state === 'ready') {
+    await window.loadURL(boot.theia.url)
+    return
+  }
+  void status
+  await loadFallback()
 }
 
 app.whenReady().then(() => {

@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
 import type {
+  DesktopBootStatus,
   DesktopDaemonMode,
   DesktopRuntimeStatus,
   MonitorEvent,
@@ -12,6 +13,7 @@ import type {
 } from '@coco/core'
 
 export interface DesktopSnapshotPayload {
+  boot: DesktopBootStatus
   runtime: DesktopRuntimeStatus
   tasks: Task[]
   workers: WorkerInfo[]
@@ -27,6 +29,9 @@ export interface DesktopTaskDetailPayload {
 const api = {
   getRuntimeStatus(): Promise<DesktopRuntimeStatus> {
     return ipcRenderer.invoke('coco.runtime.status')
+  },
+  getBootStatus(): Promise<DesktopBootStatus> {
+    return ipcRenderer.invoke('coco.boot.status')
   },
   setMode(mode: DesktopDaemonMode): Promise<DesktopRuntimeStatus> {
     return ipcRenderer.invoke('coco.runtime.mode', mode)
@@ -49,5 +54,7 @@ const api = {
 }
 
 contextBridge.exposeInMainWorld('cocoDesktop', api)
+contextBridge.exposeInMainWorld('__COCO_DESKTOP__', api)
+contextBridge.exposeInMainWorld('__COCO_AGENT_BRIDGE_READY__', true)
 
 export type CocoDesktopApi = typeof api

@@ -33,10 +33,11 @@ function mountSkeleton(): void {
 }
 
 async function refreshDashboard(selectedTaskId?: string): Promise<void> {
+  const boot = await window.cocoDesktop.getBootStatus()
   const snapshot = await window.cocoDesktop.snapshot()
   const runtimeLine = document.getElementById('runtime-line')
   if (runtimeLine) {
-    runtimeLine.textContent = `${snapshot.runtime.mode} · ${snapshot.runtime.state} · ${snapshot.runtime.daemonUrl} · ${snapshot.runtime.message}`
+    runtimeLine.textContent = `${snapshot.runtime.mode} · ${snapshot.runtime.state} · ${snapshot.runtime.daemonUrl} · ${snapshot.runtime.message} · theia=${boot.theia.state}`
   }
   const daemonUrlInput = document.getElementById('daemon-url') as HTMLInputElement | null
   if (daemonUrlInput && daemonUrlInput !== document.activeElement) {
@@ -109,6 +110,17 @@ async function refreshDashboard(selectedTaskId?: string): Promise<void> {
       panel('Tasks', tasksBody),
       panel('Workers', workersBody),
       panel('Sessions', sessionsBody),
+      panel(
+        'Desktop Boot',
+        [
+          `daemon: ${boot.daemon.mode} · ${boot.daemon.state}`,
+          `theia: ${boot.theia.state} · ${boot.theia.url}`,
+          boot.theia.lastError ? `lastError: ${boot.theia.lastError}` : '',
+          boot.recoverySuggestion ?? '',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      ),
       `<section class="panel"><h2>Timeline</h2>${controls}<pre>${timelineBody}</pre></section>`,
     ].join('')
   }

@@ -5,6 +5,25 @@
 // @ts-check
 const configs = require('./gen-webpack.config.js');
 const nodeConfig = require('./gen-webpack.node.config.js');
+const path = require('path');
+
+nodeConfig.config.plugins = nodeConfig.config.plugins.filter(
+    plugin => plugin !== nodeConfig.nativePlugin
+);
+delete nodeConfig.config.entry['worker/conoutSocketWorker'];
+delete configs[0].entry['editor.worker'];
+nodeConfig.config.resolve = {
+    ...nodeConfig.config.resolve,
+    alias: {
+        ...(nodeConfig.config.resolve?.alias ?? {}),
+        drivelist: path.resolve(__dirname, 'drivelist-stub.js'),
+        keytar: false,
+        '@theia/process/lib/common/process-common-module': false,
+        '@theia/process/lib/node/process-backend-module': false,
+        '@theia/file-search/lib/node/file-search-backend-module': false,
+        '@theia/terminal/lib/node/terminal-backend-module': false
+    }
+};
 
 /**
  * Expose bundled modules on window.theia.moduleName namespace, e.g.

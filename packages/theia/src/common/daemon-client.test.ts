@@ -60,4 +60,35 @@ describe('createDaemonClient', () => {
       method: 'POST',
     })
   })
+
+  it('reads canonical thread history through the daemon', async () => {
+    const fetchImpl = vi.fn(async (input: unknown) => {
+      const url = String(input)
+      if (url.endsWith('/threads/theia-main')) {
+        return new Response(
+          JSON.stringify({
+            threadId: 'theia-main',
+            messages: [{ id: 'm1', role: 'assistant', text: 'ready', createdAt: new Date().toISOString() }],
+          }),
+          {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          },
+        )
+      }
+      return new Response(JSON.stringify({ status: 'ok' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }) as typeof fetch
+
+    const client = createDaemonClient({
+      baseUrl: 'http://127.0.0.1:3000',
+      fetchImpl,
+    })
+
+    const thread = await client.requestThread('theia-main')
+    expect(thread.threadId).toBe('theia-main')
+    expect(thread.messages[0]?.text).toBe('ready')
+  })
 })

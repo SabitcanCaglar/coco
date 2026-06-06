@@ -3,9 +3,6 @@ import type { MessageService } from '@theia/core/lib/common/index.js'
 import { injectable, postConstruct } from 'inversify'
 import * as React from 'react'
 
-import { createSupervisor } from '@coco/openclaw-supervisor'
-import type { SupervisorSessionState } from '@coco/openclaw-supervisor'
-
 import { defaultTheiaOrchestratorUrl } from '../common/model.js'
 import type { CocoRuntimeService } from './runtime-service.js'
 
@@ -15,11 +12,11 @@ export class CocoChatWidget extends ReactWidget {
   static readonly LABEL = 'OpenClaw Chat'
 
   protected messages: string[] = [
-    'OpenClaw burada. Hedefi yaz, repo secimini ve task planini ben yoneteyim.',
+    'Mission chat hazir. Hedefi yaz; thread ve mission durumu kalici olarak tutulacak.',
   ]
 
   protected inputValue = ''
-  protected sessionState: SupervisorSessionState = {}
+  protected readonly threadId = 'theia-main'
 
   constructor(
     protected readonly messageService: MessageService,
@@ -48,16 +45,20 @@ export class CocoChatWidget extends ReactWidget {
     this.update()
 
     try {
-      const supervisor = createSupervisor({
-        daemonUrl: this.runtimeService.getDaemonUrl() || defaultTheiaOrchestratorUrl(),
-      })
-      const result = await supervisor.handleMessage(prompt, 'theia', this.sessionState)
-      this.messages = [...this.messages, `OpenClaw: ${result.reply}`]
-      if (result.updatedSessions) {
-        this.sessionState = result.updatedSessions
+      if (!this.runtimeService.getDaemonUrl()) {
+        this.runtimeService.setDaemonUrl(defaultTheiaOrchestratorUrl())
       }
-      if (result.task) {
-        this.runtimeService.setSelectedTask(result.task.id)
+      const result = await this.runtimeService.postThreadMessage(this.threadId, {
+        text: prompt,
+        surface: 'web',
+        user_id: 'theia',
+      })
+      const thread = await this.runtimeService.daemonClient.requestThread(this.threadId)
+      this.messages = thread.messages.map(
+        (message) => `${message.role === 'user' ? 'You' : 'OpenClaw'}: ${message.text}`,
+      )
+      if (result.mission) {
+        this.runtimeService.setSelectedMission(result.mission.missionId)
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -88,7 +89,7 @@ export class CocoChatWidget extends ReactWidget {
             fontSize: '13px',
           },
         },
-        'Chat-first Coco supervisor',
+        'Canonical mission chat',
       ),
       React.createElement(
         'div',
@@ -123,7 +124,7 @@ export class CocoChatWidget extends ReactWidget {
             void this.submit()
           },
         },
-        'Send to OpenClaw',
+        'Send to mission control',
       ),
     )
   }

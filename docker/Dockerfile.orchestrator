@@ -3,10 +3,12 @@ RUN corepack enable && corepack prepare pnpm@10.32.1 --activate
 WORKDIR /app
 
 FROM base AS build
+RUN apk add --no-cache python3 make g++
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
 COPY tsconfig.json tsconfig.base.json biome.json vitest.config.ts ./
 COPY packages ./packages
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile --ignore-scripts && \
+    pnpm rebuild @biomejs/biome esbuild
 RUN pnpm -r build
 RUN pnpm deploy --legacy --filter @coco/orchestrator --prod /out
 

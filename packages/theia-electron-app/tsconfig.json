@@ -13,6 +13,7 @@
     { "path": "../core" },
     { "path": "../openclaw-supervisor" },
     { "path": "../orchestrator" },
-    { "path": "../theia" }
+    { "path": "../theia" },
+    { "path": "../theia-runtime" }
   ]
 }

@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs'
 import { type IncomingMessage, createServer } from 'node:http'
 import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
@@ -15,6 +15,11 @@ import type {
   JobResult,
   LoopJobPayload,
   MonitorEvent,
+  ManagedRepoState,
+  ApprovalQueueItem,
+  Mission,
+  MissionEvent,
+  RepoExecutionProfile,
   RepoRef,
   SessionInfo,
   Task,
@@ -24,6 +29,7 @@ import type {
   TaskStatus,
   TaskStep,
   TaskStepStatus,
+  WorkspaceSession,
   WorkerInfo,
   WorkerKind,
 } from '@coco/core'
@@ -65,6 +71,9 @@ export interface DaemonConfig {
   maxConcurrentJobs?: number
   workerRunner?: typeof runJob
   dockerExec?: (args: string[], cwd?: string) => Promise<string>
+  controlPlaneUrl?: string
+  chatGatewayUrl?: string
+  fetchImpl?: typeof fetch
 }
 
 interface DockerContainerInfo {
@@ -102,6 +111,15 @@ function ensureDataDir(dir: string): string {
 
 function parseJSON<T>(value: string | null): T | undefined {
   return value ? (JSON.parse(value) as T) : undefined
+}
+
+function normalizeText(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replaceAll(/[^a-z0-9]+/g, ' ')
+    .replaceAll(/\s+/g, ' ')
+    .trim()
 }
 
 async function listDockerContainers(
@@ -145,6 +163,73 @@ function toRepo(row: Record<string, unknown>): RepoRef {
     status: row.status as RepoRef['status'],
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
+  }
+}
+
+function stackFamilyFromHints(hints: string[]): RepoExecutionProfile['stackFamily'] {
+  const normalized = new Set(hints.map((hint) => hint.toLowerCase()))
+  if (normalized.has('cs') || normalized.has('csharp') || normalized.has('dotnet')) {
+    return 'csharp'
+  }
+  if (normalized.has('cpp-unreal') || normalized.has('unreal') || normalized.has('c++')) {
+    return 'cpp-unreal'
+  }
+  if (normalized.has('ts') || normalized.has('js') || normalized.has('node')) {
+    return 'ts'
+  }
+  return 'mixed'
+}
+
+function buildRepoExecutionProfile(repo: RepoRef): RepoExecutionProfile {
+  const stackFamily = stackFamilyFromHints(repo.languageHints)
+  const runnerType =
+    stackFamily === 'csharp'
+      ? 'csharp-worker'
+      : stackFamily === 'cpp-unreal'
+        ? 'unreal-cpp-worker'
+        : stackFamily === 'ts'
+          ? 'ts-worker'
+          : 'mixed-worker'
+  return {
+    repoId: repo.id,
+    rootPath: repo.rootPath,
+    stackFamily,
+    runnerType,
+    buildCommands:
+      stackFamily === 'csharp'
+        ? ['dotnet build']
+        : stackFamily === 'cpp-unreal'
+          ? ['Engine/Build/BatchFiles/Build.sh']
+          : ['pnpm build'],
+    testCommands:
+      stackFamily === 'csharp'
+        ? ['dotnet test']
+        : stackFamily === 'cpp-unreal'
+          ? ['Engine/Build/BatchFiles/RunUAT.sh BuildCookRun']
+          : ['pnpm test'],
+    lintCommands: stackFamily === 'ts' ? ['pnpm lint'] : [],
+    artifactPaths: [],
+    sandboxClass: stackFamily === 'cpp-unreal' ? 'elevated-build' : 'default',
+    timeoutProfile: {
+      buildSeconds: stackFamily === 'cpp-unreal' ? 3600 : 900,
+      testSeconds: stackFamily === 'cpp-unreal' ? 5400 : 900,
+    },
+    allowedTools: ['shell', 'git', 'search'],
+    workerCapabilities: {
+      canEditCode: true,
+      canRunTests: true,
+      canBuild: true,
+      canUseBrowser: false,
+      canSearchWeb: true,
+      canRunShell: true,
+      canOpenIde: false,
+      artifactPaths: [],
+      timeoutLimits: {
+        buildSeconds: stackFamily === 'cpp-unreal' ? 3600 : 900,
+        testSeconds: stackFamily === 'cpp-unreal' ? 5400 : 900,
+      },
+      sandboxClass: stackFamily === 'cpp-unreal' ? 'elevated-build' : 'default',
+    },
   }
 }
 
@@ -227,6 +312,30 @@ function toTaskStep(row: Record<string, unknown>): TaskStep {
   return step
 }
 
+function toWorkspaceSession(row: Record<string, unknown>): WorkspaceSession {
+  return {
+    id: String(row.id),
+    goal: String(row.goal),
+    status: String(row.status) as WorkspaceSession['status'],
+    workerSurface: String(row.worker_surface) as WorkspaceSession['workerSurface'],
+    controlSurfaces: parseJSON<WorkspaceSession['controlSurfaces']>(
+      String(row.control_surfaces_json),
+    ) ?? ['terminal'],
+    repoRoots: parseJSON<string[]>(String(row.repo_roots_json)) ?? [],
+    managedRepos: parseJSON<ManagedRepoState[]>(String(row.managed_repos_json)) ?? [],
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+    ...(row.success_criteria ? { successCriteria: String(row.success_criteria) } : {}),
+    ...(row.focus_repo_id ? { focusRepoId: String(row.focus_repo_id) } : {}),
+    ...(row.active_task_id ? { activeTaskId: String(row.active_task_id) } : {}),
+    ...(row.active_worker_id ? { activeWorkerId: String(row.active_worker_id) } : {}),
+    ...(row.latest_summary ? { latestSummary: String(row.latest_summary) } : {}),
+    ...(row.last_review_decision
+      ? { lastReviewDecision: String(row.last_review_decision) as WorkspaceSession['lastReviewDecision'] }
+      : {}),
+  }
+}
+
 function toMonitorEvent(row: Record<string, unknown>): MonitorEvent {
   const event: MonitorEvent = {
     id: String(row.id),
@@ -277,6 +386,10 @@ export function createDaemon(config: DaemonConfig = {}) {
   const workerRunner = config.workerRunner ?? runJob
   const dockerExec =
     config.dockerExec ?? ((args: string[], cwd?: string) => runCommand('docker', args, cwd))
+  const controlPlaneUrl =
+    config.controlPlaneUrl ?? process.env.COCO_LANGGRAPH_URL ?? 'http://127.0.0.1:4100'
+  const chatGatewayUrl = config.chatGatewayUrl ?? process.env.COCO_CHAT_GATEWAY_URL
+  const fetchImpl = config.fetchImpl ?? fetch
   db.exec(`
     CREATE TABLE IF NOT EXISTS repos (
       id TEXT PRIMARY KEY,
@@ -321,6 +434,23 @@ export function createDaemon(config: DaemonConfig = {}) {
       blocked_reason TEXT,
       active_worker_id TEXT,
       artifacts_json TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS workspace_sessions (
+      id TEXT PRIMARY KEY,
+      goal TEXT NOT NULL,
+      status TEXT NOT NULL,
+      worker_surface TEXT NOT NULL,
+      control_surfaces_json TEXT NOT NULL,
+      success_criteria TEXT,
+      repo_roots_json TEXT NOT NULL,
+      managed_repos_json TEXT NOT NULL,
+      focus_repo_id TEXT,
+      active_task_id TEXT,
+      active_worker_id TEXT,
+      latest_summary TEXT,
+      last_review_decision TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -428,6 +558,25 @@ export function createDaemon(config: DaemonConfig = {}) {
     listTaskEvents: db.prepare(
       'SELECT * FROM task_events WHERE task_id = ? ORDER BY timestamp ASC',
     ),
+    insertWorkspaceSession: db.prepare(`
+      INSERT INTO workspace_sessions (
+        id, goal, status, worker_surface, control_surfaces_json, success_criteria,
+        repo_roots_json, managed_repos_json, focus_repo_id, active_task_id, active_worker_id,
+        latest_summary, last_review_decision, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `),
+    getWorkspaceSession: db.prepare('SELECT * FROM workspace_sessions WHERE id = ?'),
+    listWorkspaceSessions: db.prepare(
+      'SELECT * FROM workspace_sessions ORDER BY updated_at DESC LIMIT 100',
+    ),
+    updateWorkspaceSession: db.prepare(`
+      UPDATE workspace_sessions
+      SET goal = ?, status = ?, worker_surface = ?, control_surfaces_json = ?, success_criteria = ?,
+          repo_roots_json = ?, managed_repos_json = ?, focus_repo_id = ?, active_task_id = ?,
+          active_worker_id = ?, latest_summary = ?, last_review_decision = ?, updated_at = ?
+      WHERE id = ?
+    `),
     listSessions: db.prepare(`
       SELECT session_id, COUNT(*) AS task_count, MAX(updated_at) AS updated_at
       FROM tasks
@@ -478,7 +627,39 @@ export function createDaemon(config: DaemonConfig = {}) {
       repo.createdAt,
       repo.updatedAt,
     )
+    void syncRepoExecutionProfile(repo)
     return repo
+  }
+
+  async function syncRepoExecutionProfile(repo: RepoRef): Promise<void> {
+    await proxyJson<RepoExecutionProfile>(controlPlaneUrl, `/repo-profiles/${repo.id}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        root_path: repo.rootPath,
+        stack_family: buildRepoExecutionProfile(repo).stackFamily,
+        runner_type: buildRepoExecutionProfile(repo).runnerType,
+        build_commands: buildRepoExecutionProfile(repo).buildCommands,
+        test_commands: buildRepoExecutionProfile(repo).testCommands,
+        lint_commands: buildRepoExecutionProfile(repo).lintCommands,
+        artifact_paths: buildRepoExecutionProfile(repo).artifactPaths,
+        sandbox_class: buildRepoExecutionProfile(repo).sandboxClass,
+        timeout_profile: buildRepoExecutionProfile(repo).timeoutProfile,
+        allowed_tools: buildRepoExecutionProfile(repo).allowedTools,
+        worker_capabilities: {
+          can_edit_code: buildRepoExecutionProfile(repo).workerCapabilities.canEditCode,
+          can_run_tests: buildRepoExecutionProfile(repo).workerCapabilities.canRunTests,
+          can_build: buildRepoExecutionProfile(repo).workerCapabilities.canBuild,
+          can_use_browser: buildRepoExecutionProfile(repo).workerCapabilities.canUseBrowser,
+          can_search_web: buildRepoExecutionProfile(repo).workerCapabilities.canSearchWeb,
+          can_run_shell: buildRepoExecutionProfile(repo).workerCapabilities.canRunShell,
+          can_open_ide: buildRepoExecutionProfile(repo).workerCapabilities.canOpenIde,
+          artifact_paths: buildRepoExecutionProfile(repo).workerCapabilities.artifactPaths,
+          timeout_limits: buildRepoExecutionProfile(repo).workerCapabilities.timeoutLimits,
+          sandbox_class: buildRepoExecutionProfile(repo).workerCapabilities.sandboxClass,
+        },
+      }),
+    }).catch(() => undefined)
   }
 
   function listRepos(): RepoRef[] {
@@ -549,9 +730,37 @@ export function createDaemon(config: DaemonConfig = {}) {
     return workers.map((worker) => ({ ...worker }))
   }
 
+  function getWorkspaceSession(sessionId: string): WorkspaceSession | undefined {
+    const row = statements.getWorkspaceSession.get(sessionId) as Record<string, unknown> | undefined
+    return row ? toWorkspaceSession(row) : undefined
+  }
+
+  function persistWorkspaceSession(session: WorkspaceSession): void {
+    statements.updateWorkspaceSession.run(
+      session.goal,
+      session.status,
+      session.workerSurface,
+      JSON.stringify(session.controlSurfaces),
+      session.successCriteria ?? null,
+      JSON.stringify(session.repoRoots),
+      JSON.stringify(session.managedRepos),
+      session.focusRepoId ?? null,
+      session.activeTaskId ?? null,
+      session.activeWorkerId ?? null,
+      session.latestSummary ?? null,
+      session.lastReviewDecision ?? null,
+      session.updatedAt,
+      session.id,
+    )
+  }
+
+  function listWorkspaceSessions(): WorkspaceSession[] {
+    return (statements.listWorkspaceSessions.all() as Record<string, unknown>[]).map(toWorkspaceSession)
+  }
+
   function listSessions(): SessionInfo[] {
     const tasks = listTasks()
-    return (statements.listSessions.all() as Record<string, unknown>[]).map((row) => {
+    const taskBacked = (statements.listSessions.all() as Record<string, unknown>[]).map((row) => {
       const sessionId = String(row.session_id)
       const activeTask = tasks.find(
         (task) =>
@@ -566,6 +775,158 @@ export function createDaemon(config: DaemonConfig = {}) {
         taskCount: Number(row.task_count),
       }
     })
+    const workspace = new Map<string, SessionInfo>(
+      listWorkspaceSessions().map((session) => [
+        session.id,
+        {
+          id: session.id,
+          goal: session.goal,
+          status: session.status,
+          workerSurface: session.workerSurface,
+          controlSurfaces: session.controlSurfaces,
+          managedRepos: session.managedRepos,
+          latestSummary: session.latestSummary,
+          lastReviewDecision: session.lastReviewDecision,
+          focusRepoId: session.focusRepoId,
+          activeRepoId: session.focusRepoId,
+          activeTaskId: session.activeTaskId,
+          updatedAt: session.updatedAt,
+          taskCount: tasks.filter((task) => task.sessionId === session.id).length,
+        } satisfies SessionInfo,
+      ]),
+    )
+    for (const session of taskBacked) {
+      const existing = workspace.get(session.id)
+      workspace.set(session.id, {
+        id: session.id,
+        taskCount: Math.max(existing?.taskCount ?? 0, session.taskCount),
+        activeTaskId: existing?.activeTaskId ?? session.activeTaskId,
+        activeRepoId: existing?.activeRepoId ?? session.activeRepoId,
+        updatedAt: existing?.updatedAt ?? session.updatedAt,
+        ...(existing?.goal ? { goal: existing.goal } : {}),
+        ...(existing?.status ? { status: existing.status } : {}),
+        ...(existing?.workerSurface ? { workerSurface: existing.workerSurface } : {}),
+        ...(existing?.controlSurfaces ? { controlSurfaces: existing.controlSurfaces } : {}),
+        ...(existing?.managedRepos ? { managedRepos: existing.managedRepos } : {}),
+        ...(existing?.latestSummary ? { latestSummary: existing.latestSummary } : {}),
+        ...(existing?.lastReviewDecision
+          ? { lastReviewDecision: existing.lastReviewDecision }
+          : {}),
+        ...(existing?.focusRepoId ? { focusRepoId: existing.focusRepoId } : {}),
+      })
+    }
+    return [...workspace.values()].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+  }
+
+  async function createWorkspaceSession(input: {
+    id?: string
+    goal: string
+    workerSurface?: WorkspaceSession['workerSurface']
+    controlSurfaces?: WorkspaceSession['controlSurfaces']
+    successCriteria?: string
+    repoRoots?: string[]
+  }): Promise<WorkspaceSession> {
+    const createdAt = now()
+    const session: WorkspaceSession = {
+      id: input.id ?? randomUUID(),
+      goal: input.goal,
+      status: 'active',
+      workerSurface: input.workerSurface ?? 'aider',
+      controlSurfaces: input.controlSurfaces ?? ['terminal'],
+      successCriteria: input.successCriteria,
+      repoRoots: input.repoRoots ?? [],
+      managedRepos: [],
+      createdAt,
+      updatedAt: createdAt,
+    }
+    statements.insertWorkspaceSession.run(
+      session.id,
+      session.goal,
+      session.status,
+      session.workerSurface,
+      JSON.stringify(session.controlSurfaces),
+      session.successCriteria ?? null,
+      JSON.stringify(session.repoRoots),
+      JSON.stringify(session.managedRepos),
+      null,
+      null,
+      null,
+      null,
+      null,
+      session.createdAt,
+      session.updatedAt,
+    )
+    return session
+  }
+
+  function detectRepoHints(rootPath: string): string[] {
+    const hints = new Set<string>()
+    if (existsSync(join(rootPath, 'package.json'))) hints.add('node')
+    if (existsSync(join(rootPath, 'tsconfig.json'))) hints.add('ts')
+    if (existsSync(join(rootPath, 'pyproject.toml')) || existsSync(join(rootPath, 'requirements.txt'))) hints.add('python')
+    if (existsSync(join(rootPath, 'Cargo.toml'))) hints.add('rust')
+    if (existsSync(join(rootPath, 'go.mod'))) hints.add('go')
+    if (existsSync(join(rootPath, '.git'))) hints.add('git')
+    return [...hints]
+  }
+
+  function computeGoalRelevance(goal: string, rootPath: string, hints: string[]): number {
+    const normalizedGoal = normalizeText(goal)
+    const name = normalizeText(rootPath.split('/').at(-1) ?? rootPath)
+    let score = normalizedGoal.includes(name) ? 1 : 0
+    for (const hint of hints) {
+      if (normalizedGoal.includes(hint)) score += 0.25
+    }
+    return Math.min(1, score)
+  }
+
+  async function discoverReposForSession(session: WorkspaceSession): Promise<WorkspaceSession> {
+    const candidateRoots = new Set<string>(session.repoRoots)
+    const desktopRoot = join(process.env.COCO_HOST_HOME ?? homedir(), 'Desktop')
+    candidateRoots.add(desktopRoot)
+    const managed = new Map(session.managedRepos.map((repo) => [repo.repoId, repo]))
+
+    for (const root of candidateRoots) {
+      if (!existsSync(root)) continue
+      for (const entry of readdirSync(root, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue
+        if (entry.name.startsWith('.coco')) continue
+        if (entry.name.startsWith('coco-exp-')) continue
+        const fullPath = join(root, entry.name)
+        if (!existsSync(join(fullPath, '.git'))) continue
+        let repo = statements.getRepoByPath.get(fullPath) as Record<string, unknown> | undefined
+        if (!repo) {
+          await detectRepo(fullPath)
+          repo = statements.getRepoByPath.get(fullPath) as Record<string, unknown> | undefined
+        }
+        if (!repo) continue
+        const repoRef = toRepo(repo)
+        const hints = detectRepoHints(fullPath)
+        managed.set(repoRef.id, {
+          repoId: repoRef.id,
+          rootPath: repoRef.rootPath,
+          priority: Math.max(1, Math.round(computeGoalRelevance(session.goal, repoRef.rootPath, hints) * 100)),
+          status: 'idle',
+          workerSurface: session.workerSurface,
+          goalRelevance: computeGoalRelevance(session.goal, repoRef.rootPath, hints),
+          hints,
+          updatedAt: now(),
+        })
+      }
+    }
+
+    const managedRepos = [...managed.values()].sort((left, right) => right.priority - left.priority)
+    const nextSession: WorkspaceSession = {
+      ...session,
+      managedRepos,
+      focusRepoId: session.focusRepoId ?? managedRepos[0]?.repoId,
+      latestSummary: managedRepos.length
+        ? `${managedRepos.length} repos discovered and prioritized.`
+        : 'No repositories discovered.',
+      updatedAt: now(),
+    }
+    persistWorkspaceSession(nextSession)
+    return nextSession
   }
 
   async function appendTaskEvent(event: Omit<MonitorEvent, 'id' | 'timestamp'>): Promise<void> {
@@ -580,7 +941,12 @@ export function createDaemon(config: DaemonConfig = {}) {
     )
   }
 
-  function planForTask(taskId: string, mode: Task['mode'], successCriteria?: string): TaskPlan {
+  function planForTask(
+    taskId: string,
+    mode: Task['mode'],
+    successCriteria?: string,
+    milestoneTarget?: string,
+  ): TaskPlan {
     const steps: TaskStep[] = [
       {
         id: randomUUID(),
@@ -607,6 +973,7 @@ export function createDaemon(config: DaemonConfig = {}) {
         tool: 'run_loop_fix',
         title: mode === 'fix' ? 'Run safe fix strategy' : 'Run autopilot improvement cycle',
         status: 'pending',
+        ...(milestoneTarget ? { input: { milestoneTarget } } : {}),
       })
     }
     return {
@@ -636,7 +1003,7 @@ export function createDaemon(config: DaemonConfig = {}) {
 
   async function createTask(input: TaskCreateInput): Promise<Task> {
     const taskId = randomUUID()
-    const plan = planForTask(taskId, input.mode, input.successCriteria)
+    const plan = planForTask(taskId, input.mode, input.successCriteria, input.milestoneTarget)
     const task: Task = {
       id: taskId,
       goal: input.goal,
@@ -647,6 +1014,14 @@ export function createDaemon(config: DaemonConfig = {}) {
       createdAt: now(),
       updatedAt: now(),
       ...(input.repoId ? { repoId: input.repoId } : {}),
+      ...(input.workerSurface || input.managedRepoId || input.milestoneTarget
+        ? {
+            artifacts: {
+              ...(input.workerSurface ? { executionSurface: input.workerSurface } : {}),
+              ...(input.milestoneTarget ? { milestoneTarget: input.milestoneTarget } : {}),
+            },
+          }
+        : {}),
       ...(input.successCriteria
         ? {
             checkpoint: {
@@ -670,7 +1045,7 @@ export function createDaemon(config: DaemonConfig = {}) {
       null,
       null,
       null,
-      null,
+      task.artifacts ? JSON.stringify(task.artifacts) : null,
       task.createdAt,
       task.updatedAt,
     )
@@ -695,6 +1070,16 @@ export function createDaemon(config: DaemonConfig = {}) {
       message: `Task created in ${task.mode} mode.`,
       data: { goal: task.goal },
     })
+    const workspaceSession = getWorkspaceSession(task.sessionId)
+    if (workspaceSession) {
+      persistWorkspaceSession({
+        ...workspaceSession,
+        activeTaskId: task.id,
+        focusRepoId: task.repoId ?? workspaceSession.focusRepoId,
+        latestSummary: `Task queued in ${task.mode} mode.`,
+        updatedAt: now(),
+      })
+    }
     void processNextTask()
     return task
   }
@@ -926,8 +1311,24 @@ export function createDaemon(config: DaemonConfig = {}) {
         liveTask.status = 'failed'
       }
     } else if (step.tool === 'run_loop_fix') {
+      const workspaceSession = getWorkspaceSession(liveTask.sessionId)
       const job = await enqueueJob('loop', repo.id, {
         rounds: liveTask.mode === 'autopilot' ? 2 : 1,
+        ...(workspaceSession?.workerSurface
+          ? { executionSurface: workspaceSession.workerSurface }
+          : liveTask.artifacts?.executionSurface
+            ? { executionSurface: liveTask.artifacts.executionSurface }
+            : {}),
+        ...(workspaceSession?.id ? { sessionId: workspaceSession.id } : {}),
+        ...(step.input && typeof step.input.milestoneTarget === 'string'
+          ? { milestoneTarget: step.input.milestoneTarget }
+          : liveTask.artifacts?.milestoneTarget
+            ? { milestoneTarget: liveTask.artifacts.milestoneTarget }
+            : {}),
+        ...(liveTask.goal ? { goal: liveTask.goal } : {}),
+        ...(liveTask.plan.successCriteria
+          ? { successCriteria: liveTask.plan.successCriteria }
+          : {}),
       })
       const completed = await waitForJobCompletion(job.id)
       outputSummary = completed.result?.summary ?? 'Loop fix cycle finished.'
@@ -939,9 +1340,22 @@ export function createDaemon(config: DaemonConfig = {}) {
       liveTask.latestSummary = outputSummary
       if (completed.result?.experiment) {
         liveTask.artifacts = {
+          ...(completed.result.review?.decision
+            ? { reviewDecision: completed.result.review.decision }
+            : {}),
           ...(completed.result.review?.outcome
             ? { reviewOutcome: completed.result.review.outcome }
             : {}),
+          ...(liveTask.artifacts?.executionSurface
+            ? { executionSurface: liveTask.artifacts.executionSurface }
+            : workspaceSession?.workerSurface
+              ? { executionSurface: workspaceSession.workerSurface }
+              : {}),
+          ...(completed.result.review?.milestone
+            ? { milestoneTarget: completed.result.review.milestone }
+            : liveTask.artifacts?.milestoneTarget
+              ? { milestoneTarget: liveTask.artifacts.milestoneTarget }
+              : {}),
           ...(completed.result.experiment.patchArtifactPath
             ? { patchArtifactPath: completed.result.experiment.patchArtifactPath }
             : {}),
@@ -958,6 +1372,41 @@ export function createDaemon(config: DaemonConfig = {}) {
       }
       if (completed.job.status === 'failed') {
         liveTask.status = 'failed'
+      }
+      if (workspaceSession) {
+        const managedRepos = workspaceSession.managedRepos.map((managedRepo) =>
+          managedRepo.repoId === repo.id
+            ? {
+                ...managedRepo,
+                status: (
+                  completed.result?.review?.decision === 'needs-human-approval'
+                    ? 'reviewing'
+                    : completed.result?.review?.decision === 'revise'
+                      ? 'active'
+                      : completed.job.status === 'failed'
+                        ? 'blocked'
+                        : 'idle'
+                ) as ManagedRepoState['status'],
+                lastMilestone: completed.result?.review?.milestone ?? managedRepo.lastMilestone,
+                lastReviewOutcome:
+                  completed.result?.review?.outcome ?? managedRepo.lastReviewOutcome,
+                lastReviewDecision:
+                  completed.result?.review?.decision ?? managedRepo.lastReviewDecision,
+                updatedAt: now(),
+              }
+            : managedRepo,
+        )
+        persistWorkspaceSession({
+          ...workspaceSession,
+          managedRepos,
+          activeTaskId: liveTask.id,
+          activeWorkerId: worker.id,
+          focusRepoId: repo.id,
+          latestSummary: outputSummary,
+          lastReviewDecision:
+            completed.result?.review?.decision ?? workspaceSession.lastReviewDecision,
+          updatedAt: now(),
+        })
       }
     }
 
@@ -996,6 +1445,7 @@ export function createDaemon(config: DaemonConfig = {}) {
   }
 
   async function processNextTask(): Promise<void> {
+    if (config.embeddedWorker === false) return
     if (drainingTasks) return
     drainingTasks = true
     try {
@@ -1027,6 +1477,18 @@ export function createDaemon(config: DaemonConfig = {}) {
               message: liveTask.latestSummary ?? `${liveTask.mode} task completed.`,
             })
           }
+          const workspaceSession = getWorkspaceSession(liveTask.sessionId)
+          if (workspaceSession) {
+            persistWorkspaceSession({
+              ...workspaceSession,
+              activeTaskId: ['completed', 'failed', 'blocked', 'canceled'].includes(liveTask.status)
+                ? undefined
+                : liveTask.id,
+              activeWorkerId: undefined,
+              latestSummary: liveTask.latestSummary ?? workspaceSession.latestSummary,
+              updatedAt: now(),
+            })
+          }
           releaseWorker(worker.id)
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
@@ -1041,6 +1503,16 @@ export function createDaemon(config: DaemonConfig = {}) {
             level: 'error',
             message,
           })
+          const workspaceSession = getWorkspaceSession(liveTask.sessionId)
+          if (workspaceSession) {
+            persistWorkspaceSession({
+              ...workspaceSession,
+              activeTaskId: undefined,
+              activeWorkerId: undefined,
+              latestSummary: message,
+              updatedAt: now(),
+            })
+          }
           releaseWorker(worker.id, message)
         }
       }
@@ -1067,6 +1539,15 @@ export function createDaemon(config: DaemonConfig = {}) {
       }
       await new Promise((resolvePromise) => setTimeout(resolvePromise, 25))
     }
+  }
+
+  async function proxyJson<T>(baseUrl: string, path: string, init?: RequestInit): Promise<T> {
+    const response = await fetchImpl(`${baseUrl}${path}`, init)
+    if (!response.ok) {
+      const body = (await response.text().catch(() => '')) || response.statusText
+      throw new Error(body)
+    }
+    return (await response.json()) as T
   }
 
   const server = createServer(async (request, response) => {
@@ -1107,6 +1588,36 @@ export function createDaemon(config: DaemonConfig = {}) {
       return
     }
 
+    if (request.method === 'GET' && request.url === '/missions') {
+      try {
+        send(200, await proxyJson<Mission[]>(controlPlaneUrl, '/missions'))
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        send(502, { error: message })
+      }
+      return
+    }
+
+    if (request.method === 'GET' && request.url === '/approvals') {
+      try {
+        send(200, await proxyJson<ApprovalQueueItem[]>(controlPlaneUrl, '/approvals'))
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        send(502, { error: message })
+      }
+      return
+    }
+
+    if (request.method === 'GET' && request.url === '/repo-profiles') {
+      try {
+        send(200, await proxyJson<RepoExecutionProfile[]>(controlPlaneUrl, '/repo-profiles'))
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        send(502, { error: message })
+      }
+      return
+    }
+
     if (request.method === 'GET' && request.url === '/workers') {
       send(200, listWorkers())
       return
@@ -1115,6 +1626,19 @@ export function createDaemon(config: DaemonConfig = {}) {
     if (request.method === 'GET' && request.url === '/sessions') {
       send(200, listSessions())
       return
+    }
+
+    if (request.method === 'GET' && request.url?.startsWith('/sessions/')) {
+      const parts = request.url.split('/').filter(Boolean)
+      if (parts.length === 2) {
+        const session = getWorkspaceSession(parts[1] ?? '')
+        if (!session) {
+          send(404, { error: 'Session not found.' })
+          return
+        }
+        send(200, session)
+        return
+      }
     }
 
     if (request.method === 'GET' && request.url === '/dashboard') {
@@ -1140,6 +1664,50 @@ export function createDaemon(config: DaemonConfig = {}) {
       return
     }
 
+    if (request.method === 'POST' && /^\/threads\/[^/]+\/messages$/.test(request.url ?? '')) {
+      if (!chatGatewayUrl) {
+        send(503, { error: 'Chat gateway is not configured.' })
+        return
+      }
+      try {
+        const body = await readJSONBody(request)
+        const threadId = decodeURIComponent(request.url?.split('/')[2] ?? '')
+        const result = await proxyJson<{ reply: string; mission?: Mission | undefined }>(
+          chatGatewayUrl,
+          `/threads/${encodeURIComponent(threadId)}/messages`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body),
+          },
+        )
+        send(200, result)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        send(502, { error: message })
+      }
+      return
+    }
+
+    if (request.method === 'GET' && /^\/threads\/[^/]+$/.test(request.url ?? '')) {
+      if (!chatGatewayUrl) {
+        send(503, { error: 'Chat gateway is not configured.' })
+        return
+      }
+      try {
+        const threadId = decodeURIComponent(request.url?.split('/')[2] ?? '')
+        const result = await proxyJson<{ threadId: string; messages: unknown[] }>(
+          chatGatewayUrl,
+          `/threads/${encodeURIComponent(threadId)}`,
+        )
+        send(200, result)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        send(502, { error: message })
+      }
+      return
+    }
+
     if (request.method === 'POST' && request.url === '/jobs/doctor') {
       const body = await readJSONBody(request)
       const payload: DoctorJobPayload = {}
@@ -1160,6 +1728,20 @@ export function createDaemon(config: DaemonConfig = {}) {
       if (body.dryRun) payload.dryRun = Boolean(body.dryRun)
       if (body.goal) payload.goal = String(body.goal)
       if (body.planExcerpt) payload.planExcerpt = String(body.planExcerpt)
+      if (body.sessionId) payload.sessionId = String(body.sessionId)
+      if (body.managedRepoId) payload.managedRepoId = String(body.managedRepoId)
+      if (body.milestoneTarget) payload.milestoneTarget = String(body.milestoneTarget)
+      if (
+        body.executionSurface === 'aider' ||
+        body.executionSurface === 'roo' ||
+        body.executionSurface === 'openclaw'
+      ) {
+        const executionSurface = body.executionSurface as LoopJobPayload['executionSurface']
+        if (executionSurface) {
+          payload.executionSurface = executionSurface
+        }
+      }
+      if (body.successCriteria) payload.successCriteria = String(body.successCriteria)
       const job = await enqueueJob('loop', String(body.repoId), payload)
       send(202, job)
       return
@@ -1174,11 +1756,165 @@ export function createDaemon(config: DaemonConfig = {}) {
         ...(body.repoId ? { repoId: String(body.repoId) } : {}),
         ...(body.provider ? { provider: String(body.provider) } : {}),
         ...(body.model ? { model: String(body.model) } : {}),
+        ...(body.workerSurface ? { workerSurface: body.workerSurface as TaskCreateInput['workerSurface'] } : {}),
+        ...(body.managedRepoId ? { managedRepoId: String(body.managedRepoId) } : {}),
+        ...(body.milestoneTarget ? { milestoneTarget: String(body.milestoneTarget) } : {}),
         ...(body.successCriteria ? { successCriteria: String(body.successCriteria) } : {}),
         ...(body.maxCycles ? { maxCycles: Number(body.maxCycles) } : {}),
       })
       send(202, task)
       return
+    }
+
+    if (request.method === 'POST' && request.url === '/missions') {
+      try {
+        const body = await readJSONBody(request)
+        send(
+          201,
+          await proxyJson<Mission>(controlPlaneUrl, '/missions', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body),
+          }),
+        )
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        send(502, { error: message })
+      }
+      return
+    }
+
+    if (request.method === 'POST' && request.url?.startsWith('/repo-profiles/')) {
+      const repoId = request.url.split('/')[2] ?? ''
+      try {
+        const body = await readJSONBody(request)
+        send(
+          200,
+          await proxyJson<RepoExecutionProfile>(controlPlaneUrl, `/repo-profiles/${repoId}`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body),
+          }),
+        )
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        send(502, { error: message })
+      }
+      return
+    }
+
+    if (request.method === 'POST' && request.url === '/sessions') {
+      const body = await readJSONBody(request)
+      const session = await createWorkspaceSession({
+        ...(body.id ? { id: String(body.id) } : {}),
+        goal: String(body.goal ?? 'Workspace autopilot'),
+        ...(body.workerSurface ? { workerSurface: body.workerSurface as WorkspaceSession['workerSurface'] } : {}),
+        ...(Array.isArray(body.controlSurfaces)
+          ? { controlSurfaces: body.controlSurfaces as WorkspaceSession['controlSurfaces'] }
+          : {}),
+        ...(body.successCriteria ? { successCriteria: String(body.successCriteria) } : {}),
+        ...(Array.isArray(body.repoRoots)
+          ? { repoRoots: body.repoRoots.map((value) => String(value)) }
+          : {}),
+      })
+      send(201, session)
+      return
+    }
+
+    if (request.method === 'POST' && request.url?.startsWith('/sessions/')) {
+      const parts = request.url.split('/').filter(Boolean)
+      const sessionId = parts[1] ?? ''
+      const action = parts[2] ?? ''
+      const session = getWorkspaceSession(sessionId)
+      if (!session) {
+        send(404, { error: 'Session not found.' })
+        return
+      }
+
+      if (action === 'discover') {
+        const updated = await discoverReposForSession(session)
+        send(200, updated)
+        return
+      }
+
+      if (action === 'autopilot') {
+        const body = await readJSONBody(request)
+        const chosenRepo =
+          session.managedRepos.find((repo) => repo.repoId === session.focusRepoId) ??
+          session.managedRepos[0]
+        if (!chosenRepo) {
+          send(409, { error: 'No managed repo is available. Discover repos first.' })
+          return
+        }
+        const task = await createTask({
+          goal: String(body.goal ?? session.goal),
+          mode: 'autopilot',
+          sessionId: session.id,
+          repoId: chosenRepo.repoId,
+          workerSurface: session.workerSurface,
+          managedRepoId: chosenRepo.repoId,
+          milestoneTarget: String(body.milestoneTarget ?? 'review-required'),
+          successCriteria: String(body.successCriteria ?? session.successCriteria ?? session.goal),
+          maxCycles: body.maxCycles ? Number(body.maxCycles) : 8,
+        })
+        persistWorkspaceSession({
+          ...session,
+          activeTaskId: task.id,
+          focusRepoId: chosenRepo.repoId,
+          latestSummary: `Autopilot queued for ${chosenRepo.rootPath}.`,
+          updatedAt: now(),
+        })
+        send(202, task)
+        return
+      }
+
+      if (action === 'review') {
+        const body = await readJSONBody(request)
+        const chosenRepo =
+          session.managedRepos.find((repo) => repo.repoId === session.focusRepoId) ??
+          session.managedRepos[0]
+        if (!chosenRepo) {
+          send(409, { error: 'No managed repo is available. Discover repos first.' })
+          return
+        }
+        const job = await enqueueJob('loop', chosenRepo.repoId, {
+          rounds: 1,
+          sessionId: session.id,
+          managedRepoId: chosenRepo.repoId,
+          executionSurface: session.workerSurface,
+          goal: body.goal ? String(body.goal) : session.goal,
+          milestoneTarget: String(body.milestoneTarget ?? 'review-required'),
+          ...(body.successCriteria
+            ? { successCriteria: String(body.successCriteria) }
+            : session.successCriteria
+              ? { successCriteria: session.successCriteria }
+              : {}),
+        })
+        send(202, job)
+        return
+      }
+
+      if (action === 'control') {
+        const body = await readJSONBody(request)
+        const command = String(body.action ?? '')
+        const nextSession: WorkspaceSession = {
+          ...session,
+          status:
+            command === 'pause'
+              ? 'paused'
+              : command === 'resume'
+                ? 'active'
+                : command === 'complete'
+                  ? 'completed'
+                  : session.status,
+          focusRepoId: body.focusRepoId ? String(body.focusRepoId) : session.focusRepoId,
+          latestSummary: body.summary ? String(body.summary) : session.latestSummary,
+          updatedAt: now(),
+        }
+        persistWorkspaceSession(nextSession)
+        send(200, nextSession)
+        return
+      }
     }
 
     if (request.method === 'GET' && request.url?.startsWith('/jobs/')) {
@@ -1189,6 +1925,55 @@ export function createDaemon(config: DaemonConfig = {}) {
         return
       }
       send(200, job)
+      return
+    }
+
+    if (request.method === 'GET' && request.url?.startsWith('/missions/')) {
+      const missionPath = request.url.slice('/missions/'.length)
+      try {
+        if (missionPath.endsWith('/events')) {
+          const missionId = missionPath.slice(0, -'/events'.length)
+          send(
+            200,
+            await proxyJson<MissionEvent[]>(controlPlaneUrl, `/missions/${missionId}/events`),
+          )
+          return
+        }
+        if (missionPath.endsWith('/steps')) {
+          const missionId = missionPath.slice(0, -'/steps'.length)
+          send(200, await proxyJson<Record<string, unknown>[]>(controlPlaneUrl, `/missions/${missionId}/steps`))
+          return
+        }
+        if (missionPath.endsWith('/checkpoints')) {
+          const missionId = missionPath.slice(0, -'/checkpoints'.length)
+          send(
+            200,
+            await proxyJson<Record<string, unknown>[]>(
+              controlPlaneUrl,
+              `/missions/${missionId}/checkpoints`,
+            ),
+          )
+          return
+        }
+        send(200, await proxyJson<Mission>(controlPlaneUrl, `/missions/${missionPath}/state`))
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        send(502, { error: message })
+      }
+      return
+    }
+
+    if (request.method === 'GET' && request.url?.startsWith('/repo-profiles/')) {
+      const repoId = request.url.split('/')[2] ?? ''
+      try {
+        send(
+          200,
+          await proxyJson<RepoExecutionProfile>(controlPlaneUrl, `/repo-profiles/${repoId}`),
+        )
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        send(502, { error: message })
+      }
       return
     }
 
@@ -1210,6 +1995,52 @@ export function createDaemon(config: DaemonConfig = {}) {
         return
       }
       send(200, task)
+      return
+    }
+
+    if (
+      request.method === 'POST' &&
+      request.url?.startsWith('/missions/') &&
+      request.url.endsWith('/control')
+    ) {
+      const missionId = request.url.split('/')[2] ?? ''
+      try {
+        const body = await readJSONBody(request)
+        send(
+          200,
+          await proxyJson<Mission>(controlPlaneUrl, `/missions/${missionId}/commands`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body),
+          }),
+        )
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        send(502, { error: message })
+      }
+      return
+    }
+
+    if (
+      request.method === 'POST' &&
+      request.url?.startsWith('/approvals/') &&
+      request.url.endsWith('/approve')
+    ) {
+      const missionId = request.url.split('/')[2] ?? ''
+      try {
+        const body = await readJSONBody(request)
+        send(
+          200,
+          await proxyJson<Mission>(controlPlaneUrl, `/approvals/${missionId}/approve`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body),
+          }),
+        )
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        send(502, { error: message })
+      }
       return
     }
 

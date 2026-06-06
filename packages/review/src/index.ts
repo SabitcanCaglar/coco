@@ -15,6 +15,11 @@ import { resolvePluginEntrypoints, validatePluginModule } from '@coco/core'
 import { simpleGit } from 'simple-git'
 
 export interface ReviewContext extends ReviewCheckPluginContext {}
+export interface MilestoneReviewContext extends ReviewContext {
+  goal?: string
+  successCriteria?: string
+  milestoneTarget?: string
+}
 
 export interface ReviewGateConfig {
   pluginPaths?: string[]
@@ -227,7 +232,7 @@ export class ReviewGate {
     ]
   }
 
-  async run(context: ReviewContext): Promise<ReviewReport> {
+  async run(context: MilestoneReviewContext): Promise<ReviewReport> {
     const checks = await this.getChecks()
     const discovery: ReviewPolicy['discovery'] = {
       build: null,
@@ -266,10 +271,41 @@ export class ReviewGate {
     )
     const hasRequiredFailure = [...failedChecks].some((checkId) => requiredCheckIds.has(checkId))
     const outcome = hasRequiredFailure ? 'fail' : context.patchApplied ? 'needs-approval' : 'pass'
+    const milestone = context.milestoneTarget ?? (context.patchApplied ? 'first-patch-ready' : 'baseline-analyzed')
+    const nextMilestone =
+      outcome === 'fail'
+        ? 'review-required'
+        : milestone === 'baseline-analyzed'
+          ? 'first-patch-ready'
+          : milestone === 'first-patch-ready'
+            ? 'tests-green'
+            : milestone === 'tests-green'
+              ? 'feature-criteria-met'
+              : 'ready-for-merge'
+    const decision =
+      outcome === 'fail'
+        ? 'revise'
+        : outcome === 'needs-approval'
+          ? 'needs-human-approval'
+          : context.patchApplied
+            ? 'needs-human-approval'
+            : 'pass'
+    const summary = [
+      context.goal ? `Goal: ${context.goal}` : null,
+      context.successCriteria ? `Done: ${context.successCriteria}` : null,
+      `Milestone: ${milestone}`,
+      `Decision: ${decision}`,
+    ]
+      .filter(Boolean)
+      .join(' | ')
 
     return {
       generatedAt: new Date().toISOString(),
       outcome,
+      decision,
+      milestone,
+      nextMilestone,
+      summary,
       policy,
       results,
       violations,

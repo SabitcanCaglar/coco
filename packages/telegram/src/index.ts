@@ -1,22 +1,24 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import {
-  type SupervisorSessionState,
-  createSupervisor,
-  renderSupervisorHelp,
-} from '@coco/openclaw-supervisor'
+  type OpenClawAgentConfig,
+  type SessionState,
+  createOpenClawAgent,
+  renderOpenClawHelp,
+} from '@coco/openclaw-agent'
 
 export interface TelegramBotConfig {
   token?: string
   daemonUrl?: string
+  chatGatewayUrl?: string
   allowedChatIds?: number[]
   stateDir?: string
   pollingTimeoutSeconds?: number
   fetchImpl?: typeof fetch
-  planner?: unknown
+  planner?: OpenClawAgentConfig['planner']
 }
 
 interface TelegramUpdate {
@@ -35,6 +37,12 @@ interface TelegramResponse<T> {
   ok: boolean
   result: T
 }
+
+interface ProcessedMessagesState {
+  messages: string[]
+}
+
+const PROCESSED_MESSAGES_LIMIT = 500
 
 function nowPath(config?: TelegramBotConfig): string {
   const root =
@@ -73,17 +81,82 @@ function parseAllowedChats(raw: string | undefined): number[] {
     .filter((value) => Number.isFinite(value))
 }
 
-function loadSessions(stateDir: string): SupervisorSessionState {
+function loadSessions(stateDir: string): SessionState {
   const filePath = join(stateDir, 'sessions.json')
   if (!existsSync(filePath)) {
     return {}
   }
-  return JSON.parse(readFileSync(filePath, 'utf-8')) as SupervisorSessionState
+  return JSON.parse(readFileSync(filePath, 'utf-8')) as SessionState
 }
 
-function saveSessions(stateDir: string, sessions: SupervisorSessionState): void {
+function saveSessions(stateDir: string, sessions: SessionState): void {
   mkdirSync(stateDir, { recursive: true })
   writeFileSync(join(stateDir, 'sessions.json'), JSON.stringify(sessions, null, 2), 'utf-8')
+}
+
+function loadOffset(stateDir: string): number {
+  const filePath = join(stateDir, 'offset.json')
+  if (!existsSync(filePath)) {
+    return 0
+  }
+
+  const parsed = JSON.parse(readFileSync(filePath, 'utf-8')) as { offset?: unknown }
+  return typeof parsed.offset === 'number' && Number.isFinite(parsed.offset) ? parsed.offset : 0
+}
+
+function saveOffset(stateDir: string, offset: number): void {
+  mkdirSync(stateDir, { recursive: true })
+  writeFileSync(join(stateDir, 'offset.json'), JSON.stringify({ offset }, null, 2), 'utf-8')
+}
+
+function loadProcessedMessages(stateDir: string): Set<string> {
+  const filePath = join(stateDir, 'processed-messages.json')
+  if (!existsSync(filePath)) {
+    return new Set()
+  }
+
+  const parsed = JSON.parse(readFileSync(filePath, 'utf-8')) as Partial<ProcessedMessagesState>
+  const messages = Array.isArray(parsed.messages)
+    ? parsed.messages.filter((value): value is string => typeof value === 'string')
+    : []
+  return new Set(messages)
+}
+
+function saveProcessedMessages(stateDir: string, processedMessages: Set<string>): void {
+  mkdirSync(stateDir, { recursive: true })
+  const messages = Array.from(processedMessages).slice(-PROCESSED_MESSAGES_LIMIT)
+  writeFileSync(
+    join(stateDir, 'processed-messages.json'),
+    JSON.stringify({ messages }, null, 2),
+    'utf-8',
+  )
+}
+
+function createMessageKey(chatId: number, messageId: number): string {
+  return `${chatId}:${messageId}`
+}
+
+function acquireLock(stateDir: string): string {
+  mkdirSync(stateDir, { recursive: true })
+  const lockPath = join(stateDir, 'bot.lock')
+  if (existsSync(lockPath)) {
+    unlinkSync(lockPath)
+  }
+  try {
+    writeFileSync(lockPath, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }), {
+      encoding: 'utf-8',
+      flag: 'wx',
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`Telegram bot lock already held at ${lockPath}. ${message}`)
+  }
+  return lockPath
+}
+
+function releaseLock(lockPath: string | undefined): void {
+  if (!lockPath || !existsSync(lockPath)) return
+  unlinkSync(lockPath)
 }
 
 async function telegramRequest<T>(
@@ -126,26 +199,51 @@ export function createTelegramBot(config: TelegramBotConfig = {}) {
   }
   const botToken = token
   const daemonUrl = config.daemonUrl ?? process.env.COCO_DAEMON_URL ?? 'http://127.0.0.1:3000'
+  const chatGatewayUrl = config.chatGatewayUrl ?? process.env.COCO_CHAT_GATEWAY_URL
   const allowedChatIds =
     config.allowedChatIds ?? parseAllowedChats(process.env.TELEGRAM_ALLOWED_CHAT_IDS)
   const stateDir = nowPath(config)
   const pollingTimeoutSeconds =
     config.pollingTimeoutSeconds ?? Number(process.env.TELEGRAM_POLL_TIMEOUT ?? 20)
   const fetchImpl = config.fetchImpl ?? fetch
-  const supervisor = createSupervisor({
+  const agent = createOpenClawAgent({
     daemonUrl,
+    ...(config.planner ? { planner: config.planner } : {}),
   })
-  let offset = 0
+  let offset = loadOffset(stateDir)
+  const processedMessages = loadProcessedMessages(stateDir)
+  let lockPath: string | undefined
   let running = false
   let autopilotTimer: NodeJS.Timeout | undefined
+  let signalHandlersRegistered = false
 
   async function handleText(chatId: number, text: string): Promise<string> {
     if (allowedChatIds.length > 0 && !allowedChatIds.includes(chatId)) {
       return 'unauthorized chat'
     }
 
+    if (chatGatewayUrl) {
+      const response = await fetchImpl(
+        `${chatGatewayUrl}/threads/${encodeURIComponent(String(chatId))}/messages`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            text,
+            surface: 'telegram',
+            user_id: String(chatId),
+          }),
+        },
+      )
+      if (!response.ok) {
+        throw new Error(`chat gateway message failed: ${response.status}`)
+      }
+      const body = (await response.json()) as { reply?: string }
+      return body.reply ?? 'Mesaji aldim.'
+    }
+
     const sessions = loadSessions(stateDir)
-    const result = await supervisor.handleMessage(text, String(chatId), sessions)
+    const result = await agent.handleMessage(text, String(chatId), sessions)
     if (result.updatedSessions) {
       saveSessions(stateDir, result.updatedSessions)
     }
@@ -184,8 +282,15 @@ export function createTelegramBot(config: TelegramBotConfig = {}) {
 
   async function handleUpdate(update: TelegramUpdate): Promise<void> {
     offset = update.update_id + 1
+    saveOffset(stateDir, offset)
     const message = update.message
     if (!message?.text) return
+    const messageKey = createMessageKey(message.chat.id, message.message_id)
+    if (processedMessages.has(messageKey)) {
+      return
+    }
+    processedMessages.add(messageKey)
+    saveProcessedMessages(stateDir, processedMessages)
     if (allowedChatIds.length > 0 && !allowedChatIds.includes(message.chat.id)) {
       await sendMessage(fetchImpl, botToken, message.chat.id, 'unauthorized chat')
       return
@@ -195,8 +300,7 @@ export function createTelegramBot(config: TelegramBotConfig = {}) {
       const reply = await handleText(message.chat.id, message.text)
       await sendMessage(fetchImpl, botToken, message.chat.id, reply)
     } catch (error) {
-      const messageText = error instanceof Error ? error.message : String(error)
-      await sendMessage(fetchImpl, botToken, message.chat.id, `error: ${messageText}`)
+      console.error(error)
     }
   }
 
@@ -214,24 +318,38 @@ export function createTelegramBot(config: TelegramBotConfig = {}) {
   return {
     config: {
       daemonUrl,
+      ...(chatGatewayUrl ? { chatGatewayUrl } : {}),
       stateDir,
       pollingTimeoutSeconds,
       allowedChatIds,
     },
     renderHelp(): string {
-      return renderSupervisorHelp()
+      return renderOpenClawHelp()
     },
     handleText,
+    pollOnce,
     probeDaemon,
     async start(): Promise<void> {
+      lockPath = acquireLock(stateDir)
+      if (!signalHandlersRegistered) {
+        const shutdown = () => {
+          releaseLock(lockPath)
+          lockPath = undefined
+          process.exit(0)
+        }
+        process.once('SIGINT', shutdown)
+        process.once('SIGTERM', shutdown)
+        signalHandlersRegistered = true
+      }
       running = true
       autopilotTimer = setInterval(() => {
         const sessions = loadSessions(stateDir)
-        void supervisor
-          .probeMonitoring()
-          .then((probe) => {
-            saveSessions(stateDir, sessions)
-            return probe
+        void agent
+          .tickAutopilot(sessions, async (sessionId, message) => {
+            await sendMessage(fetchImpl, botToken, Number(sessionId), message)
+          })
+          .then((nextSessions) => {
+            saveSessions(stateDir, nextSessions)
           })
           .catch((error) => {
             console.error(error)
@@ -249,6 +367,8 @@ export function createTelegramBot(config: TelegramBotConfig = {}) {
       if (autopilotTimer) {
         clearInterval(autopilotTimer)
       }
+      releaseLock(lockPath)
+      lockPath = undefined
     },
   }
 }

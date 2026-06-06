@@ -429,6 +429,84 @@ describe('@coco/openclaw-agent', () => {
     expect(result.reply).toContain('OpenClaw planner su anda istegi isleyemedi')
   })
 
+  it('repairs a non-json planner reply with a second JSON normalization pass', async () => {
+    process.env.OPENROUTER_API_KEY = 'test-openrouter-key'
+    globalThis.fetch = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/repos') && (!init || init.method === undefined)) {
+        return new Response(
+          JSON.stringify([{ id: 'repo-api', rootPath: '/host-home/Desktop/cognify-subs-api' }]),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        )
+      }
+      if (url.includes('/chat/completions')) {
+        const body = JSON.parse(String(init?.body ?? '{}')) as { messages?: Array<{ content?: string }> }
+        const userPrompt = body.messages?.at(-1)?.content ?? ''
+        if (userPrompt.includes('RAW PLANNER RESPONSE')) {
+          return new Response(
+            JSON.stringify({
+              choices: [
+                {
+                  message: {
+                    content: JSON.stringify({
+                      reply: 'Uzun kosu autopilotunu cognify-subs-api icin baslatiyorum.',
+                      queue: 'loop',
+                      selectRepoHint: 'cognify-subs-api',
+                      taskScope: 'long',
+                      autopilot: {
+                        enabled: true,
+                        goal: 'Autopilot modlari icin dosyalari olustur ve paralel akisi yonet',
+                        taskScope: 'long',
+                        roundsPerJob: 1,
+                        maxCycles: 12,
+                        usePlanMd: true,
+                      },
+                    }),
+                  },
+                  finish_reason: 'stop',
+                },
+              ],
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          )
+        }
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content:
+                    'Tamam, bunu uzun kosu bir autopilot akisi olarak ele alip once gerekli dosya iskeletini cikaracagim.',
+                },
+                finish_reason: 'stop',
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        )
+      }
+      if (url.endsWith('/jobs/loop') && init?.method === 'POST') {
+        return new Response(JSON.stringify({ id: 'job-repair-1' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    }) as typeof fetch
+
+    const agent = createOpenClawAgent({ daemonUrl: 'http://127.0.0.1:3000' })
+    const result = await agent.handleMessage(
+      'auto pilot modlari icin dosyalar olusturucaz convert boost, vsc mobile ui mobile app projesi, llm-friendly ve hepsinin backendi subs api olacak sekilde paralel tek chat sessiondan yonetecegiz',
+      'repair-json',
+      {},
+    )
+
+    expect(result.reply).toContain('cognify-subs-api uzerinde calismaya basliyorum.')
+    expect(result.reply).toContain('Plani birakmadan tur tur ilerleyecegim')
+    expect(result.updatedSessions?.['repair-json']?.autopilot?.enabled).toBe(true)
+    expect(result.updatedSessions?.['repair-json']?.autopilot?.currentJobId).toBe('job-repair-1')
+  })
+
   it('continues autopilot with queued loop jobs and notifications', async () => {
     const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
       const url = String(input)

@@ -1011,10 +1011,7 @@ async function detectLLMMode(
           }
         } else {
           if (config.mode === 'ollama') {
-            console.error(
-              `\x1b[31mError: Model "${config.model}" not found. Run: ollama pull ${config.model}\x1b[0m`,
-            )
-            process.exit(1)
+            throw new Error(`Model "${config.model}" not found. Run: ollama pull ${config.model}`)
           }
           // auto mode: fallback
           if (config.mode === 'auto') {
@@ -1028,10 +1025,7 @@ async function detectLLMMode(
       }
     } catch {
       if (config.mode === 'ollama') {
-        console.error(
-          '\x1b[31mError: Cannot connect to Ollama. Is it running? Install: https://ollama.com\x1b[0m',
-        )
-        process.exit(1)
+        throw new Error('Cannot connect to Ollama. Is it running? Install: https://ollama.com')
       }
       if (config.mode === 'auto') {
         log(
@@ -1077,10 +1071,7 @@ async function detectLLMMode(
     } catch {
       /* */
     }
-    console.error(
-      '\x1b[31mError: OpenClaw mode requires Ollama. Install: https://ollama.com\x1b[0m',
-    )
-    process.exit(1)
+    throw new Error('OpenClaw mode requires Ollama. Install: https://ollama.com')
   }
 
   return { engine: new RuleBasedEngine(), label: 'deterministic (rule-based, no LLM)' }
@@ -1192,15 +1183,13 @@ export async function run(config: LoopConfig): Promise<LoopRunSummary> {
   // check if git repo
   const isRepo = await git.checkIsRepo().catch(() => false)
   if (!isRepo) {
-    console.error('\x1b[31mError: Not a git repository. Karpathy Loop requires git.\x1b[0m')
-    process.exit(1)
+    throw new Error('Not a git repository. Karpathy Loop requires git.')
   }
 
   // check for uncommitted changes
   const status = await git.status()
   if (status.modified.length > 0 || status.staged.length > 0) {
-    console.error('\x1b[31mError: Uncommitted changes detected. Commit or stash first.\x1b[0m')
-    process.exit(1)
+    throw new Error('Uncommitted changes detected. Commit or stash first.')
   }
 
   const currentBranch = status.current || 'main'

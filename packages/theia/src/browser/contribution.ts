@@ -57,7 +57,7 @@ export class CocoChatContribution
   }
 
   async onStart(): Promise<void> {
-    await this.openView({ activate: false, reveal: true })
+    await this.openView({ activate: true, reveal: true })
   }
 }
 
@@ -83,7 +83,7 @@ export class CocoMonitorContribution
 
   async onStart(app: FrontendApplication): Promise<void> {
     void app
-    await this.openView({ activate: false, reveal: true })
+    await this.openView({ activate: true, reveal: true })
   }
 }
 
@@ -108,7 +108,7 @@ export class CocoRuntimeContribution
   }
 
   async onStart(): Promise<void> {
-    await this.openView({ activate: false, reveal: true })
+    await this.openView({ activate: true, reveal: true })
   }
 }
 
@@ -133,7 +133,7 @@ export class CocoTimelineContribution
   }
 
   async onStart(): Promise<void> {
-    await this.openView({ activate: false, reveal: true })
+    await this.openView({ activate: true, reveal: true })
   }
 }
 

@@ -565,14 +565,15 @@ function getPlanExcerpt(repoPath?: string): string | undefined {
 
 function parseJsonObject<T>(raw: string): T | undefined {
   const trimmed = raw.trim()
+  const unfenced = trimmed.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()
   try {
-    return JSON.parse(trimmed) as T
+    return JSON.parse(unfenced) as T
   } catch {
-    const start = trimmed.indexOf('{')
-    const end = trimmed.lastIndexOf('}')
+    const start = unfenced.indexOf('{')
+    const end = unfenced.lastIndexOf('}')
     if (start >= 0 && end > start) {
       try {
-        return JSON.parse(trimmed.slice(start, end + 1)) as T
+        return JSON.parse(unfenced.slice(start, end + 1)) as T
       } catch {
         return undefined
       }
@@ -602,6 +603,74 @@ async function runAutopilotReplanner(
   ].join('\n\n')
 
   return runOpenClawPlanner(config, prompt, session)
+}
+
+async function repairPlannerDecision(
+  inputText: string,
+  session: ChatSession,
+  rawResponse: string,
+): Promise<PlannerDecision | undefined> {
+  const registry = new LLMRegistry()
+  const response = await registry.generate(
+    {
+      systemPrompt: [
+        'You repair planner outputs into strict JSON.',
+        'Return strict JSON only.',
+        'Do not wrap the answer in markdown fences.',
+        'If the raw planner reply is plain Turkish text, preserve it in the reply field.',
+      ].join('\n'),
+      messages: [
+        {
+          role: 'user',
+          content: [
+            `USER MESSAGE:\n${inputText}`,
+            `ACTIVE SESSION:\n${JSON.stringify(session, null, 2)}`,
+            `RAW PLANNER RESPONSE:\n${rawResponse}`,
+            `Return JSON with this schema:
+{
+  "reply": "short assistant reply in Turkish",
+  "provider": "optional provider",
+  "model": "optional model",
+  "selectRepoHint": "optional repo id, path, or name hint",
+  "registerPath": "optional absolute path",
+  "taskScope": "short|long",
+  "plan": ["optional ordered plan step", "optional next step"],
+  "successCriteria": "optional done definition",
+  "queue": "none|doctor|loop|fanout|repos|jobs|session|docker|desktop",
+  "fanoutRepoHints": ["optional", "repo", "hints"],
+  "dockerAction": "list|start|stop|restart|remove",
+  "dockerTargetHint": "optional docker container id or name",
+  "autopilot": {
+    "enabled": true,
+    "goal": "optional long-running goal",
+    "taskScope": "short|long",
+    "plan": ["optional step 1", "optional step 2"],
+    "successCriteria": "optional done definition",
+    "roundsPerJob": 1,
+    "maxCycles": 12,
+    "usePlanMd": true
+  }
+}`,
+          ].join('\n\n'),
+        },
+      ],
+      temperature: 0,
+      maxOutputTokens: 300,
+      responseFormat: 'json',
+    },
+    {
+      ...((session.provider ?? process.env.OPENROUTER_API_KEY)
+        ? { provider: session.provider ?? 'openclaw' }
+        : {}),
+      ...(session.model ? { model: session.model } : {}),
+    },
+  )
+
+  if (response.finishReason === 'error') {
+    return undefined
+  }
+
+  return parseJsonObject<PlannerDecision>(response.content)
 }
 
 async function runOpenClawPlanner(
@@ -709,7 +778,12 @@ async function runOpenClawPlanner(
     return undefined
   }
 
-  return parseJsonObject<PlannerDecision>(response.content)
+  const parsed = parseJsonObject<PlannerDecision>(response.content)
+  if (parsed) {
+    return parsed
+  }
+
+  return repairPlannerDecision(inputText, session, response.content).catch(() => undefined)
 }
 
 async function handleCommand(

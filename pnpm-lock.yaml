@@ -34,6 +34,15 @@ importers:
         specifier: ^2.0.0
         version: 2.1.9(@types/node@24.12.0)(less@3.13.1)(terser@5.46.1)
 
+  packages/chat-gateway:
+    dependencies:
+      '@coco/core':
+        specifier: workspace:*
+        version: link:../core
+      '@coco/llm':
+        specifier: workspace:*
+        version: link:../llm
+
   packages/cli:
     dependencies:
       '@coco/core':
@@ -178,7 +187,13 @@ importers:
       '@theia/editor':
         specifier: latest
         version: 1.69.0
+      '@theia/file-search':
+        specifier: latest
+        version: 1.69.0(typescript@5.9.3)
       '@theia/filesystem':
+        specifier: latest
+        version: 1.69.0(typescript@5.9.3)
+      '@theia/markers':
         specifier: latest
         version: 1.69.0(typescript@5.9.3)
       '@theia/messages':
@@ -193,6 +208,9 @@ importers:
       '@theia/navigator':
         specifier: latest
         version: 1.69.0(typescript@5.9.3)
+      '@theia/outline-view':
+        specifier: latest
+        version: 1.69.0
       '@theia/preferences':
         specifier: latest
         version: 1.69.0(typescript@5.9.3)
@@ -202,9 +220,18 @@ importers:
       '@theia/terminal':
         specifier: latest
         version: 1.69.0(typescript@5.9.3)
+      '@theia/userstorage':
+        specifier: latest
+        version: 1.69.0(typescript@5.9.3)
+      '@theia/variable-resolver':
+        specifier: latest
+        version: 1.69.0
       '@theia/workspace':
         specifier: latest
         version: 1.69.0(typescript@5.9.3)
+      '@vscode/ripgrep':
+        specifier: ^1.15.14
+        version: 1.17.1
       reflect-metadata:
         specifier: ^0.2.2
         version: 0.2.2
@@ -221,6 +248,9 @@ importers:
       style-loader:
         specifier: ^4.0.0
         version: 4.0.0(webpack@5.105.4)
+      umd-compat-loader:
+        specifier: ^2.1.1
+        version: 2.1.2
 
   packages/theia-electron-app:
     dependencies:
@@ -236,9 +266,18 @@ importers:
       '@coco/theia':
         specifier: workspace:*
         version: link:../theia
+      '@coco/theia-runtime':
+        specifier: workspace:*
+        version: link:../theia-runtime
       electron:
         specifier: ^37.2.3
         version: 37.10.3
+
+  packages/theia-runtime:
+    dependencies:
+      '@coco/core':
+        specifier: workspace:*
+        version: link:../core
 
   packages/worker:
     dependencies:

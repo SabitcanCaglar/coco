@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest'
 
 import type { DesktopRuntimeStatus } from '@coco/core'
 
-import { type MonitorSnapshot, buildWorkbenchBlueprint, summarizeMonitorSnapshot } from './index.js'
+import {
+  type MonitorSnapshot,
+  buildWorkbenchBlueprint,
+  summarizeMonitorSnapshot,
+  summarizeWorkspaceSession,
+} from './index.js'
 
 describe('@coco/theia', () => {
   it('defines the expected workbench blueprint', () => {
@@ -74,5 +79,32 @@ describe('@coco/theia', () => {
     expect(summarizeMonitorSnapshot(snapshot)).toContain('embedded')
     expect(summarizeMonitorSnapshot(snapshot)).toContain('1 running')
     expect(summarizeMonitorSnapshot(snapshot)).toContain('1 blocked')
+  })
+
+  it('summarizes workspace session focus and review state', () => {
+    expect(
+      summarizeWorkspaceSession({
+        id: 'theia',
+        goal: 'Improve subs-api',
+        status: 'active',
+        workerSurface: 'aider',
+        controlSurfaces: ['terminal', 'ide', 'telegram'],
+        repoRoots: ['/tmp'],
+        managedRepos: [
+          {
+            repoId: 'repo-1',
+            rootPath: '/tmp/subs-api',
+            priority: 100,
+            status: 'reviewing',
+            workerSurface: 'aider',
+            updatedAt: new Date().toISOString(),
+          },
+        ],
+        focusRepoId: 'repo-1',
+        lastReviewDecision: 'needs-human-approval',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }),
+    ).toContain('review needs-human-approval')
   })
 })

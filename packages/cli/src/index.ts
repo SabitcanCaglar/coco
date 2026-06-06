@@ -63,6 +63,13 @@ coco apply <patch-file> [repo-path] [--json]
 coco doctor run <repo-or-path> [--json]
 coco tasks [--json]
 coco task inspect <task-id> [--json]
+coco sessions [--json]
+coco session create <goal> [--worker aider|roo|openclaw] [--json]
+coco session inspect <session-id> [--json]
+coco session discover <session-id> [--json]
+coco session focus <session-id> <repo-id> [--json]
+coco session autopilot <session-id> [--json]
+coco session review <session-id> [--json]
 coco workers [--json]
 coco watch <task-id> [--json]
 coco plugins list [--json]
@@ -91,6 +98,7 @@ loop <path>              Expand to: loop run <path>
 review <path>            Expand to: review run <path>
 plugins                  Expand to: plugins list
 jobs                     Expand to: jobs list
+sessions                 Expand to: sessions
 
 Tip:
 Paths with spaces can be quoted, for example:
@@ -356,6 +364,9 @@ function expandShellCommand(tokens: string[]): string[] {
   }
   if (group === 'jobs' && rest.length === 0) {
     return ['jobs', 'list']
+  }
+  if (group === 'sessions' && rest.length === 0) {
+    return ['sessions']
   }
 
   return tokens
@@ -689,6 +700,119 @@ export async function runCLI(
         },
         result.reply,
       )
+      return 0
+    }
+
+    if (group === 'sessions' && !action) {
+      const response = await daemonRequest('/sessions')
+      if (!response?.ok) {
+        throw new Error('Unable to fetch sessions.')
+      }
+      const sessions = (await response.json()) as Array<Record<string, unknown>>
+      printOutput(
+        io,
+        jsonMode,
+        sessions,
+        sessions.length === 0
+          ? 'No sessions found.'
+          : sessions
+              .map(
+                (session) =>
+                  `${String(session.id)}  ${String(session.status ?? 'active')}  ${String(session.goal ?? '')}`.trim(),
+              )
+              .join('\n'),
+      )
+      return 0
+    }
+
+    if (group === 'session' && action === 'create' && subject) {
+      const worker = parseFlag(rest, '--worker', 'aider') ?? 'aider'
+      const response = await daemonRequest('/sessions', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          goal: [subject, ...removeFlagValues(rest, ['--worker'])].join(' ').trim(),
+          workerSurface: worker,
+          controlSurfaces: ['terminal', 'ide', 'telegram'],
+        }),
+      })
+      if (!response?.ok) {
+        throw new Error('Unable to create session.')
+      }
+      const session = (await response.json()) as Record<string, unknown>
+      printOutput(io, jsonMode, session, `Created session ${String(session.id)}.`)
+      return 0
+    }
+
+    if (group === 'session' && action === 'inspect' && subject) {
+      const response = await daemonRequest(`/sessions/${subject}`)
+      if (!response?.ok) {
+        throw new Error(`Unable to inspect session ${subject}.`)
+      }
+      const session = (await response.json()) as Record<string, unknown>
+      printOutput(io, jsonMode, session, JSON.stringify(session, null, 2))
+      return 0
+    }
+
+    if (group === 'session' && action === 'discover' && subject) {
+      const response = await daemonRequest(`/sessions/${subject}/discover`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      if (!response?.ok) {
+        throw new Error(`Unable to discover repos for session ${subject}.`)
+      }
+      const session = (await response.json()) as Record<string, unknown>
+      printOutput(io, jsonMode, session, `Discovery refreshed for session ${subject}.`)
+      return 0
+    }
+
+    if (group === 'session' && action === 'focus' && subject) {
+      const repoId = firstPositionalArg(rest)
+      if (!repoId) {
+        throw new Error('Provide a repo id for session focus.')
+      }
+      const response = await daemonRequest(`/sessions/${subject}/control`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'focus', focusRepoId: repoId }),
+      })
+      if (!response?.ok) {
+        throw new Error(`Unable to focus repo ${repoId} for session ${subject}.`)
+      }
+      const session = (await response.json()) as Record<string, unknown>
+      printOutput(io, jsonMode, session, `Focused ${repoId} for session ${subject}.`)
+      return 0
+    }
+
+    if (group === 'session' && action === 'autopilot' && subject) {
+      const response = await daemonRequest(`/sessions/${subject}/autopilot`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      if (!response?.ok) {
+        throw new Error(`Unable to start autopilot for session ${subject}.`)
+      }
+      const task = (await response.json()) as Record<string, unknown>
+      printOutput(io, jsonMode, task, `Autopilot queued for session ${subject}.`)
+      return 0
+    }
+
+    if (group === 'session' && action === 'review' && subject) {
+      const response = await daemonRequest(`/sessions/${subject}/review`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      if (!response?.ok) {
+        throw new Error(`Unable to queue review for session ${subject}.`)
+      }
+      const job = (await response.json()) as Record<string, unknown>
+      printOutput(io, jsonMode, job, `Review job queued for session ${subject}.`)
       return 0
     }
 

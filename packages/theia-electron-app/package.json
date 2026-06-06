@@ -15,6 +15,7 @@
     "@coco/openclaw-supervisor": "workspace:*",
     "@coco/orchestrator": "workspace:*",
     "@coco/theia": "workspace:*",
+    "@coco/theia-runtime": "workspace:*",
     "electron": "^37.2.3"
   }
 }

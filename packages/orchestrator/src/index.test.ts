@@ -1,3 +1,4 @@
+import { createServer } from 'node:http'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,6 +9,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { createDaemon } from './index.js'
 
 const daemons: Array<ReturnType<typeof createDaemon>> = []
+const auxiliaryServers: Array<ReturnType<typeof createServer>> = []
 
 async function createFixtureRepo(): Promise<string> {
   const repoPath = await mkdtemp(join(tmpdir(), 'coco-orchestrator-repo-'))
@@ -76,7 +78,22 @@ async function createPluginDirectory(): Promise<string> {
 afterEach(async () => {
   process.env.COCO_PLUGIN_PATHS = undefined
   process.env.COCO_BIND_HOST = undefined
+  process.env.COCO_HOST_HOME = undefined
   await Promise.all(daemons.splice(0).map((daemon) => daemon.stop()))
+  await Promise.all(
+    auxiliaryServers.splice(0).map(
+      (server) =>
+        new Promise<void>((resolvePromise, reject) => {
+          server.close((error) => {
+            if (error) {
+              reject(error)
+              return
+            }
+            resolvePromise()
+          })
+        }),
+    ),
+  )
 })
 
 describe('@coco/orchestrator', () => {
@@ -223,6 +240,76 @@ describe('@coco/orchestrator', () => {
     await rm(dataDir, { recursive: true, force: true })
   })
 
+  it('creates workspace sessions, discovers repos, and queues autopilot tasks', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'coco-orchestrator-session-'))
+    const hostHome = await mkdtemp(join(tmpdir(), 'coco-orchestrator-home-'))
+    process.env.COCO_HOST_HOME = hostHome
+    const repoPath = join(hostHome, 'Desktop', 'subs-api')
+    await mkdir(repoPath, { recursive: true })
+    await writeFile(join(repoPath, 'package.json'), JSON.stringify({ name: 'subs-api' }))
+    const git = simpleGit(repoPath)
+    await git.init()
+    await git.addConfig('user.name', 'coco-test')
+    await git.addConfig('user.email', 'coco@example.com')
+    await git.add('.')
+    await git.commit('initial commit')
+
+    const daemon = createDaemon({
+      port: 0,
+      dataDir,
+      embeddedWorker: false,
+      workerRunner: async (job) => ({
+        jobId: job.id,
+        repoId: job.repoId,
+        type: job.type,
+        success: true,
+        summary: 'stub worker complete',
+      }),
+    })
+    daemons.push(daemon)
+    await daemon.start()
+
+    const address = daemon.server.address()
+    const port = typeof address === 'object' && address ? address.port : 0
+
+    const createResponse = await fetch(`http://127.0.0.1:${port}/sessions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: 'workspace-1',
+        goal: 'Build subs api',
+        workerSurface: 'aider',
+        controlSurfaces: ['terminal', 'ide', 'telegram'],
+      }),
+    })
+    expect(createResponse.status).toBe(201)
+
+    const discoverResponse = await fetch(`http://127.0.0.1:${port}/sessions/workspace-1/discover`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+    expect(discoverResponse.status).toBe(200)
+    const discovered = (await discoverResponse.json()) as { managedRepos: Array<{ repoId: string }> }
+    expect(discovered.managedRepos.length).toBeGreaterThan(0)
+
+    const autopilotResponse = await fetch(
+      `http://127.0.0.1:${port}/sessions/workspace-1/autopilot`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      },
+    )
+    expect(autopilotResponse.status).toBe(202)
+    const task = (await autopilotResponse.json()) as { sessionId: string; artifacts?: { executionSurface?: string } }
+    expect(task.sessionId).toBe('workspace-1')
+    expect(task.artifacts?.executionSurface).toBe('aider')
+
+    await rm(hostHome, { recursive: true, force: true })
+    await rm(dataDir, { recursive: true, force: true })
+  })
+
   it('lists and controls docker containers through the daemon API', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'coco-orchestrator-docker-'))
     const daemon = createDaemon({
@@ -363,6 +450,210 @@ describe('@coco/orchestrator', () => {
     })
 
     expect(daemon.config.host).toBe('0.0.0.0')
+    await rm(dataDir, { recursive: true, force: true })
+  })
+
+  it('proxies mission and thread requests to the new control plane surfaces', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'coco-orchestrator-mission-proxy-'))
+    const missionId = 'mission-123'
+
+    const controlPlane = createServer(async (request, response) => {
+      response.setHeader('content-type', 'application/json')
+      if (request.method === 'GET' && request.url === '/missions') {
+        response.end(JSON.stringify([{ missionId, threadId: 'thread-1', status: 'pending' }]))
+        return
+      }
+      if (request.method === 'GET' && request.url === '/approvals') {
+        response.end(
+          JSON.stringify([
+            {
+              missionId,
+              stepId: 'step-1',
+              threadId: 'thread-1',
+              goal: 'Run migration',
+              stepClass: 'migration',
+              runnerType: 'csharp-worker',
+              summary: 'Approval required',
+              createdAt: new Date().toISOString(),
+            },
+          ]),
+        )
+        return
+      }
+      if (request.method === 'GET' && request.url === '/repo-profiles') {
+        response.end(
+          JSON.stringify([
+            {
+              repoId: 'repo-1',
+              rootPath: '/workspace/subs-api',
+              stackFamily: 'ts',
+              runnerType: 'ts-worker',
+              buildCommands: ['pnpm build'],
+              testCommands: ['pnpm test'],
+              lintCommands: ['pnpm lint'],
+              artifactPaths: [],
+              sandboxClass: 'default',
+              timeoutProfile: {},
+              allowedTools: ['shell'],
+              workerCapabilities: {},
+              updatedAt: new Date().toISOString(),
+            },
+          ]),
+        )
+        return
+      }
+      if (request.method === 'GET' && request.url === `/missions/${missionId}/state`) {
+        response.end(JSON.stringify({ missionId, threadId: 'thread-1', status: 'running' }))
+        return
+      }
+      if (request.method === 'GET' && request.url === `/missions/${missionId}/steps`) {
+        response.end(JSON.stringify([{ stepId: 'step-1', missionId, status: 'blocked' }]))
+        return
+      }
+      if (request.method === 'GET' && request.url === `/missions/${missionId}/checkpoints`) {
+        response.end(JSON.stringify([{ checkpointId: 'cp-1', missionId, summary: 'checkpoint' }]))
+        return
+      }
+      if (request.method === 'GET' && request.url === `/missions/${missionId}/events`) {
+        response.end(JSON.stringify([{ eventId: 'evt-1', missionId, eventType: 'MissionCreated' }]))
+        return
+      }
+      if (request.method === 'POST' && request.url === '/missions') {
+        response.end(JSON.stringify({ missionId, threadId: 'thread-1', status: 'pending' }))
+        return
+      }
+      if (request.method === 'POST' && request.url === `/missions/${missionId}/commands`) {
+        response.end(JSON.stringify({ missionId, threadId: 'thread-1', status: 'paused' }))
+        return
+      }
+      if (request.method === 'POST' && request.url === `/approvals/${missionId}/approve`) {
+        response.end(JSON.stringify({ missionId, threadId: 'thread-1', status: 'running' }))
+        return
+      }
+      if (request.method === 'POST' && request.url === '/repo-profiles/repo-1') {
+        response.end(
+          JSON.stringify({
+            repoId: 'repo-1',
+            rootPath: '/workspace/subs-api',
+            stackFamily: 'ts',
+            runnerType: 'ts-worker',
+          }),
+        )
+        return
+      }
+      response.statusCode = 404
+      response.end(JSON.stringify({ error: 'not found' }))
+    })
+    auxiliaryServers.push(controlPlane)
+    await new Promise<void>((resolvePromise) => controlPlane.listen(0, '127.0.0.1', resolvePromise))
+    const controlPlaneAddress = controlPlane.address()
+    const controlPlanePort =
+      typeof controlPlaneAddress === 'object' && controlPlaneAddress ? controlPlaneAddress.port : 0
+
+    const chatGateway = createServer(async (request, response) => {
+      response.setHeader('content-type', 'application/json')
+      if (request.method === 'POST' && request.url === '/threads/thread-1/messages') {
+        response.end(JSON.stringify({ reply: 'thread reply', mission: { missionId } }))
+        return
+      }
+      if (request.method === 'GET' && request.url === '/threads/thread-1') {
+        response.end(
+          JSON.stringify({
+            threadId: 'thread-1',
+            messages: [{ id: 'msg-1', role: 'assistant', text: 'thread reply' }],
+          }),
+        )
+        return
+      }
+      response.statusCode = 404
+      response.end(JSON.stringify({ error: 'not found' }))
+    })
+    auxiliaryServers.push(chatGateway)
+    await new Promise<void>((resolvePromise) => chatGateway.listen(0, '127.0.0.1', resolvePromise))
+    const chatGatewayAddress = chatGateway.address()
+    const chatGatewayPort =
+      typeof chatGatewayAddress === 'object' && chatGatewayAddress ? chatGatewayAddress.port : 0
+
+    const daemon = createDaemon({
+      port: 0,
+      dataDir,
+      controlPlaneUrl: `http://127.0.0.1:${controlPlanePort}`,
+      chatGatewayUrl: `http://127.0.0.1:${chatGatewayPort}`,
+      embeddedWorker: false,
+    })
+    daemons.push(daemon)
+    await daemon.start()
+
+    const address = daemon.server.address()
+    const port = typeof address === 'object' && address ? address.port : 0
+
+    const missionsResponse = await fetch(`http://127.0.0.1:${port}/missions`)
+    expect(missionsResponse.status).toBe(200)
+    const missions = (await missionsResponse.json()) as Array<{ missionId: string }>
+    expect(missions).toEqual([{ missionId, threadId: 'thread-1', status: 'pending' }])
+
+    const missionResponse = await fetch(`http://127.0.0.1:${port}/missions/${missionId}`)
+    expect(missionResponse.status).toBe(200)
+    const mission = (await missionResponse.json()) as { missionId: string; status: string }
+    expect(mission).toMatchObject({ missionId, status: 'running' })
+
+    const missionEventsResponse = await fetch(`http://127.0.0.1:${port}/missions/${missionId}/events`)
+    expect(missionEventsResponse.status).toBe(200)
+    const missionEvents = (await missionEventsResponse.json()) as Array<{ missionId: string }>
+    expect(missionEvents).toEqual([{ eventId: 'evt-1', missionId, eventType: 'MissionCreated' }])
+
+    const createMissionResponse = await fetch(`http://127.0.0.1:${port}/missions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ goal: 'Analyze repo' }),
+    })
+    expect(createMissionResponse.status).toBe(201)
+    const createdMission = (await createMissionResponse.json()) as { missionId: string }
+    expect(createdMission.missionId).toBe(missionId)
+
+    const controlMissionResponse = await fetch(`http://127.0.0.1:${port}/missions/${missionId}/control`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ command: 'pause' }),
+    })
+    expect(controlMissionResponse.status).toBe(200)
+    const controlledMission = (await controlMissionResponse.json()) as { status: string }
+    expect(controlledMission.status).toBe('paused')
+
+    const approvalsResponse = await fetch(`http://127.0.0.1:${port}/approvals`)
+    expect(approvalsResponse.status).toBe(200)
+    const approvals = (await approvalsResponse.json()) as Array<{ stepClass: string }>
+    expect(approvals[0]?.stepClass).toBe('migration')
+
+    const approveResponse = await fetch(`http://127.0.0.1:${port}/approvals/${missionId}/approve`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+    expect(approveResponse.status).toBe(200)
+    const approvedMission = (await approveResponse.json()) as { status: string }
+    expect(approvedMission.status).toBe('running')
+
+    const repoProfilesResponse = await fetch(`http://127.0.0.1:${port}/repo-profiles`)
+    expect(repoProfilesResponse.status).toBe(200)
+    const repoProfiles = (await repoProfilesResponse.json()) as Array<{ runnerType: string }>
+    expect(repoProfiles[0]?.runnerType).toBe('ts-worker')
+
+    const postThreadResponse = await fetch(`http://127.0.0.1:${port}/threads/thread-1/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'status' }),
+    })
+    expect(postThreadResponse.status).toBe(200)
+    const threadReply = (await postThreadResponse.json()) as { reply: string }
+    expect(threadReply.reply).toBe('thread reply')
+
+    const getThreadResponse = await fetch(`http://127.0.0.1:${port}/threads/thread-1`)
+    expect(getThreadResponse.status).toBe(200)
+    const thread = (await getThreadResponse.json()) as { threadId: string; messages: Array<{ text: string }> }
+    expect(thread.threadId).toBe('thread-1')
+    expect(thread.messages[0]?.text).toBe('thread reply')
+
     await rm(dataDir, { recursive: true, force: true })
   })
 })

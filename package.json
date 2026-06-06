@@ -9,6 +9,7 @@
   "scripts": {
     "loop": "tsx packages/loop/src/karpathy-loop.ts",
     "build": "pnpm -r build",
+    "theia:runtime:build": "pnpm --filter @coco/theia-runtime build",
     "theia:desktop:build": "pnpm --filter @coco/theia-electron-app build",
     "theia:desktop:start": "pnpm --filter @coco/theia-electron-app start",
     "theia:bundle": "pnpm --filter @coco/theia-browser-app bundle",

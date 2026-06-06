@@ -9,6 +9,9 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./frontend-module": {
+      "import": "./dist/browser/frontend-module.js"
     }
   },
   "files": ["dist"],

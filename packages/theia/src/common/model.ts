@@ -1,4 +1,11 @@
-import type { DesktopRuntimeStatus, SessionInfo, Task, WorkerInfo } from '@coco/core'
+import type {
+  ApprovalQueueItem,
+  DesktopRuntimeStatus,
+  SessionInfo,
+  Task,
+  WorkerInfo,
+  WorkspaceSession,
+} from '@coco/core'
 
 export interface CocoWorkbenchPanel {
   id: string
@@ -18,6 +25,23 @@ export interface MonitorSnapshot {
   tasks: Task[]
   workers: WorkerInfo[]
   sessions: SessionInfo[]
+  approvals?: ApprovalQueueItem[] | undefined
+}
+
+export function summarizeWorkspaceSession(session: WorkspaceSession | undefined): string {
+  if (!session) {
+    return 'No workspace session yet.'
+  }
+  const focusRepo =
+    session.managedRepos.find((repo) => repo.repoId === session.focusRepoId)?.rootPath ?? 'none'
+  return [
+    `${session.status} · worker ${session.workerSurface}`,
+    `focus ${focusRepo}`,
+    `${session.managedRepos.length} repos`,
+    session.lastReviewDecision ? `review ${session.lastReviewDecision}` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ')
 }
 
 export function buildWorkbenchBlueprint(): CocoWorkbenchBlueprint {
@@ -27,9 +51,9 @@ export function buildWorkbenchBlueprint(): CocoWorkbenchBlueprint {
     panels: [
       {
         id: 'coco.chat',
-        title: 'OpenClaw Chat',
+        title: 'Mission Chat',
         area: 'left',
-        description: 'Natural-language task entrypoint backed by the shared OpenClaw supervisor.',
+        description: 'Chat-first mission control surface backed by the shared gateway.',
       },
       {
         id: 'coco.monitor',
@@ -66,10 +90,11 @@ export function summarizeMonitorSnapshot(snapshot: MonitorSnapshot): string {
   const runningTasks = snapshot.tasks.filter((task) => task.status === 'running').length
   const blockedTasks = snapshot.tasks.filter((task) => task.status === 'blocked').length
   const busyWorkers = snapshot.workers.filter((worker) => worker.status === 'busy').length
+  const approvals = snapshot.approvals?.length ?? 0
   const runtimePrefix = snapshot.runtime
     ? `${snapshot.runtime.mode} · ${snapshot.runtime.state}`
     : 'runtime unknown'
-  return `${runtimePrefix} · ${snapshot.tasks.length} tasks · ${runningTasks} running · ${blockedTasks} blocked · ${busyWorkers}/${snapshot.workers.length} workers busy · ${snapshot.sessions.length} sessions`
+  return `${runtimePrefix} · ${snapshot.tasks.length} tasks · ${runningTasks} running · ${blockedTasks} blocked · ${approvals} approvals · ${busyWorkers}/${snapshot.workers.length} workers busy · ${snapshot.sessions.length} sessions`
 }
 
 export function normalizeTaskHeadline(task: Task): string {

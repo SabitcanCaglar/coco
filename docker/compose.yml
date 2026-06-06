@@ -1,17 +1,80 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-coco}
+      POSTGRES_USER: ${POSTGRES_USER:-coco}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-coco-dev-password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-coco} -d ${POSTGRES_DB:-coco}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    ports:
+      - "5432:5432"
+
+  langgraph-control-plane:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.langgraph-control-plane
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      LANGGRAPH_CONTROL_PORT: 4100
+      LANGGRAPH_CONTROL_DATABASE_URL: postgresql://${POSTGRES_USER:-coco}:${POSTGRES_PASSWORD:-coco-dev-password}@postgres:5432/${POSTGRES_DB:-coco}
+      COCO_ORCHESTRATOR_URL: http://orchestrator:3000
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      COCO_OPENROUTER_MODEL: ${COCO_OPENROUTER_MODEL:-stepfun/step-3.5-flash:free}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - ${HOME}:/host-home:ro
+      - ..:/workspace:ro
+    ports:
+      - "4100:4100"
+
+  chat-gateway:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.chat-gateway
+    restart: unless-stopped
+    depends_on:
+      langgraph-control-plane:
+        condition: service_started
+    environment:
+      PORT: 4200
+      COCO_LANGGRAPH_URL: http://langgraph-control-plane:4100
+    ports:
+      - "4200:4200"
+
   orchestrator:
     build:
       context: ..
       dockerfile: docker/Dockerfile.orchestrator
     restart: unless-stopped
+    depends_on:
+      langgraph-control-plane:
+        condition: service_started
+      chat-gateway:
+        condition: service_started
     environment:
       COCO_BIND_HOST: 0.0.0.0
       COCO_HOME: /data
       COCO_MAX_CONCURRENCY: ${COCO_MAX_CONCURRENCY:-4}
       OLLAMA_URL: http://ollama:11434
+      COCO_LANGGRAPH_URL: http://langgraph-control-plane:4100
+      COCO_CHAT_GATEWAY_URL: http://chat-gateway:4200
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
       COCO_OPENROUTER_MODEL: ${COCO_OPENROUTER_MODEL:-stepfun/step-3.5-flash:free}
+      COCO_GIT_USER_NAME: ${COCO_GIT_USER_NAME:-}
+      COCO_GIT_USER_EMAIL: ${COCO_GIT_USER_EMAIL:-}
       NODE_ENV: production
       LOG_LEVEL: ${LOG_LEVEL:-info}
     volumes:
@@ -30,8 +93,11 @@ services:
     depends_on:
       orchestrator:
         condition: service_started
+      chat-gateway:
+        condition: service_started
     environment:
       COCO_DAEMON_URL: http://orchestrator:3000
+      COCO_CHAT_GATEWAY_URL: http://chat-gateway:4200
       COCO_ENV_FILE: /workspace/.env
       COCO_HOME: /data
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
@@ -39,6 +105,8 @@ services:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
       COCO_OPENROUTER_MODEL: ${COCO_OPENROUTER_MODEL:-stepfun/step-3.5-flash:free}
+      COCO_GIT_USER_NAME: ${COCO_GIT_USER_NAME:-}
+      COCO_GIT_USER_EMAIL: ${COCO_GIT_USER_EMAIL:-}
       COCO_MAX_CONCURRENCY: ${COCO_MAX_CONCURRENCY:-4}
     volumes:
       - ../.docker-data/telegram:/data
@@ -66,4 +134,5 @@ services:
       - ollama
 
 volumes:
+  postgres_data:
   ollama_data:
