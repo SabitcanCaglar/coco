@@ -10,3 +10,19 @@ coverage/
 PLAN.md
 .coco/
 .docker-data/
+
+# Theia browser app — compiled frontend bundles
+packages/theia-browser-app/lib/
+packages/theia-browser-app/src-gen/
+
+# Electron app build output
+packages/theia-electron-app/lib/
+
+# Runtime & temp dirs
+.runtime/
+.tmp-telegram-probe/
+
+# Python bytecode cache
+**/__pycache__/
+**/*.pyc
+**/*.pyo
