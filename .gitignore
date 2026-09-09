@@ -20,6 +20,7 @@ packages/theia-electron-app/lib/
 
 # Runtime & temp dirs
 .runtime/
+.omp/handoffs/
 .tmp-telegram-probe/
 
 # Python bytecode cache

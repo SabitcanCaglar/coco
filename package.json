@@ -7,6 +7,10 @@
   "description": "Karpathy Loop for software engineering — hypothesis-driven self-improving code analysis",
   "license": "MIT",
   "scripts": {
+    "harness": "bash scripts/omp-harness.sh interactive",
+    "harness:long": "bash scripts/omp-harness.sh long",
+    "harness:resume": "bash scripts/omp-harness.sh resume",
+    "harness:doctor": "bash scripts/omp-harness.sh doctor",
     "loop": "tsx packages/loop/src/karpathy-loop.ts",
     "build": "pnpm -r build",
     "theia:runtime:build": "pnpm --filter @coco/theia-runtime build",

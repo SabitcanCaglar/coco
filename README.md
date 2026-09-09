@@ -215,6 +215,29 @@ cd coco
 pnpm install
 ```
 
+### OMP long-running coding harness
+
+The repository includes a project-scoped OMP configuration with OpenRouter model routing,
+fallbacks, isolated subagents, checkpoints, context compaction, and Chromium automation.
+
+```bash
+# Interactive terminal session (write/exec actions ask for approval)
+pnpm harness
+
+# Unattended plan -> implement -> test loop, capped at 8 hours
+pnpm harness:long -- "Implement the next PLAN.md milestone and verify it in the browser"
+
+# Resume a saved harness session
+pnpm harness:resume
+
+# Check the local harness installation and model catalog
+pnpm harness:doctor
+```
+
+Set `OPENROUTER_API_KEY` in the shell or the repository `.env`. OMP sessions and screenshots are
+stored under `.runtime/omp/`. The long-running command prevents macOS idle sleep, but never pushes,
+merges, publishes, or deploys unless explicitly instructed.
+
 ### Local Maintainer Runtime
 
 ```bash

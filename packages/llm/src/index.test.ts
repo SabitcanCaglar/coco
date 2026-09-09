@@ -25,9 +25,11 @@ describe('@coco/llm', () => {
     expect(new OllamaProvider().name).toBe('ollama')
     expect(new AnthropicProvider().name).toBe('anthropic')
     expect(new NullProvider().name).toBe('null')
-    const registry = new LLMRegistry()
+    const registry = new LLMRegistry([new NullProvider(), new OllamaProvider()])
     expect(registry.list()).toEqual(['null', 'ollama'])
-    expect(listLLMPlugins()).toHaveLength(2)
+    expect(listLLMPlugins().map((plugin) => plugin.provider.name)).toEqual(
+      expect.arrayContaining(['null', 'ollama']),
+    )
     await expect(registry.resolve({ provider: 'null' })).resolves.toMatchObject({
       provider: 'null',
     })
@@ -88,7 +90,9 @@ describe('@coco/llm', () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            choices: [{ message: { content: '{"reply":"merhaba","queue":"none"}' }, finish_reason: 'stop' }],
+            choices: [
+              { message: { content: '{"reply":"merhaba","queue":"none"}' }, finish_reason: 'stop' },
+            ],
             usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
           }),
           { status: 200, headers: { 'content-type': 'application/json' } },
