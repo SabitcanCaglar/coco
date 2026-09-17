@@ -81,16 +81,16 @@ module.exports = (async () => {
         await load(container, import('@theia/filesystem/lib/browser/filesystem-frontend-module'));
         await load(container, import('@theia/filesystem/lib/browser/download/file-download-frontend-module'));
         await load(container, import('@theia/filesystem/lib/browser/file-dialog/file-dialog-module'));
-        await load(container, import('@theia/messages/lib/browser/messages-frontend-module'));
+        await load(container, import('@theia/process/lib/common/process-common-module'));
         await load(container, import('@theia/workspace/lib/browser/workspace-frontend-module'));
+        await load(container, import('@theia/file-search/lib/browser/file-search-frontend-module'));
         await load(container, import('@theia/markers/lib/browser/problem/problem-frontend-module'));
+        await load(container, import('@theia/messages/lib/browser/messages-frontend-module'));
         await load(container, import('@theia/outline-view/lib/browser/outline-view-frontend-module'));
         await load(container, import('@theia/monaco/lib/browser/monaco-frontend-module'));
         await load(container, import('@theia/navigator/lib/browser/navigator-frontend-module'));
         await load(container, import('@theia/userstorage/lib/browser/user-storage-frontend-module'));
         await load(container, import('@theia/preferences/lib/browser/preference-frontend-module'));
-        await load(container, import('@theia/process/lib/common/process-common-module'));
-        await load(container, import('@theia/file-search/lib/browser/file-search-frontend-module'));
         await load(container, import('@theia/terminal/lib/browser/terminal-frontend-module'));
         
         MonacoInit.init(container);

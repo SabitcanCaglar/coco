@@ -26,7 +26,7 @@ globalThis.extensionInfo = [
         "version": "1.69.0"
     },
     {
-        "name": "@theia/messages",
+        "name": "@theia/process",
         "version": "1.69.0"
     },
     {
@@ -34,7 +34,15 @@ globalThis.extensionInfo = [
         "version": "1.69.0"
     },
     {
+        "name": "@theia/file-search",
+        "version": "1.69.0"
+    },
+    {
         "name": "@theia/markers",
+        "version": "1.69.0"
+    },
+    {
+        "name": "@theia/messages",
         "version": "1.69.0"
     },
     {
@@ -55,14 +63,6 @@ globalThis.extensionInfo = [
     },
     {
         "name": "@theia/preferences",
-        "version": "1.69.0"
-    },
-    {
-        "name": "@theia/process",
-        "version": "1.69.0"
-    },
-    {
-        "name": "@theia/file-search",
         "version": "1.69.0"
     },
     {

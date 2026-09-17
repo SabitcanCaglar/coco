@@ -7,6 +7,7 @@
   "description": "Karpathy Loop for software engineering — hypothesis-driven self-improving code analysis",
   "license": "MIT",
   "scripts": {
+    "menu": "bash scripts/coco-menu.sh",
     "harness": "bash scripts/omp-harness.sh interactive",
     "harness:long": "bash scripts/omp-harness.sh long",
     "harness:resume": "bash scripts/omp-harness.sh resume",

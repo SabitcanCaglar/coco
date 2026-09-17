@@ -55,15 +55,11 @@ module.exports = async (port, host, argv) => {
         await load(require('@theia/editor/lib/node/editor-backend-module'));
         await load(require('@theia/filesystem/lib/node/filesystem-backend-module'));
         await load(require('@theia/filesystem/lib/node/download/file-download-backend-module'));
-        await load(require('@theia/messages/lib/node/messages-backend-module'));
         await load(require('@theia/workspace/lib/node/workspace-backend-module'));
         await load(require('@theia/markers/lib/node/problem-backend-module'));
+        await load(require('@theia/messages/lib/node/messages-backend-module'));
         await load(require('@theia/navigator/lib/node/navigator-backend-module'));
         await load(require('@theia/preferences/lib/node/preference-backend-module'));
-        await load(require('@theia/process/lib/common/process-common-module'));
-        await load(require('@theia/process/lib/node/process-backend-module'));
-        await load(require('@theia/file-search/lib/node/file-search-backend-module'));
-        await load(require('@theia/terminal/lib/node/terminal-backend-module'));
         return await start(port, host, argv);
     } catch (error) {
         if (typeof error !== 'number') {

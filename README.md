@@ -238,6 +238,10 @@ Set `OPENROUTER_API_KEY` in the shell or the repository `.env`. OMP sessions and
 stored under `.runtime/omp/`. The long-running command prevents macOS idle sleep, but never pushes,
 merges, publishes, or deploys unless explicitly instructed.
 
+For a command-free launcher on macOS, double-click `Coco.command` in Finder. It opens a terminal
+control menu for starting, resuming, and checking harness runs. The same menu is available with
+`pnpm menu`.
+
 ### Local Maintainer Runtime
 
 ```bash
