@@ -271,7 +271,8 @@ export class ReviewGate {
     )
     const hasRequiredFailure = [...failedChecks].some((checkId) => requiredCheckIds.has(checkId))
     const outcome = hasRequiredFailure ? 'fail' : context.patchApplied ? 'needs-approval' : 'pass'
-    const milestone = context.milestoneTarget ?? (context.patchApplied ? 'first-patch-ready' : 'baseline-analyzed')
+    const milestone =
+      context.milestoneTarget ?? (context.patchApplied ? 'first-patch-ready' : 'baseline-analyzed')
     const nextMilestone =
       outcome === 'fail'
         ? 'review-required'

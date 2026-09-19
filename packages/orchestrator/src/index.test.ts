@@ -1,5 +1,5 @@
-import { createServer } from 'node:http'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -290,7 +290,9 @@ describe('@coco/orchestrator', () => {
       body: JSON.stringify({}),
     })
     expect(discoverResponse.status).toBe(200)
-    const discovered = (await discoverResponse.json()) as { managedRepos: Array<{ repoId: string }> }
+    const discovered = (await discoverResponse.json()) as {
+      managedRepos: Array<{ repoId: string }>
+    }
     expect(discovered.managedRepos.length).toBeGreaterThan(0)
 
     const autopilotResponse = await fetch(
@@ -302,7 +304,10 @@ describe('@coco/orchestrator', () => {
       },
     )
     expect(autopilotResponse.status).toBe(202)
-    const task = (await autopilotResponse.json()) as { sessionId: string; artifacts?: { executionSurface?: string } }
+    const task = (await autopilotResponse.json()) as {
+      sessionId: string
+      artifacts?: { executionSurface?: string }
+    }
     expect(task.sessionId).toBe('workspace-1')
     expect(task.artifacts?.executionSurface).toBe('aider')
 
@@ -597,7 +602,9 @@ describe('@coco/orchestrator', () => {
     const mission = (await missionResponse.json()) as { missionId: string; status: string }
     expect(mission).toMatchObject({ missionId, status: 'running' })
 
-    const missionEventsResponse = await fetch(`http://127.0.0.1:${port}/missions/${missionId}/events`)
+    const missionEventsResponse = await fetch(
+      `http://127.0.0.1:${port}/missions/${missionId}/events`,
+    )
     expect(missionEventsResponse.status).toBe(200)
     const missionEvents = (await missionEventsResponse.json()) as Array<{ missionId: string }>
     expect(missionEvents).toEqual([{ eventId: 'evt-1', missionId, eventType: 'MissionCreated' }])
@@ -611,11 +618,14 @@ describe('@coco/orchestrator', () => {
     const createdMission = (await createMissionResponse.json()) as { missionId: string }
     expect(createdMission.missionId).toBe(missionId)
 
-    const controlMissionResponse = await fetch(`http://127.0.0.1:${port}/missions/${missionId}/control`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ command: 'pause' }),
-    })
+    const controlMissionResponse = await fetch(
+      `http://127.0.0.1:${port}/missions/${missionId}/control`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ command: 'pause' }),
+      },
+    )
     expect(controlMissionResponse.status).toBe(200)
     const controlledMission = (await controlMissionResponse.json()) as { status: string }
     expect(controlledMission.status).toBe('paused')
@@ -650,7 +660,10 @@ describe('@coco/orchestrator', () => {
 
     const getThreadResponse = await fetch(`http://127.0.0.1:${port}/threads/thread-1`)
     expect(getThreadResponse.status).toBe(200)
-    const thread = (await getThreadResponse.json()) as { threadId: string; messages: Array<{ text: string }> }
+    const thread = (await getThreadResponse.json()) as {
+      threadId: string
+      messages: Array<{ text: string }>
+    }
     expect(thread.threadId).toBe('thread-1')
     expect(thread.messages[0]?.text).toBe('thread reply')
 

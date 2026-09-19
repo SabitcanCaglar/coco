@@ -4,21 +4,21 @@ import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs'
 import { type IncomingMessage, createServer } from 'node:http'
 import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import type {
+  ApprovalQueueItem,
   DoctorJobPayload,
   Job,
   JobEvent,
   JobPayload,
   JobResult,
   LoopJobPayload,
-  MonitorEvent,
   ManagedRepoState,
-  ApprovalQueueItem,
   Mission,
   MissionEvent,
+  MonitorEvent,
   RepoExecutionProfile,
   RepoRef,
   SessionInfo,
@@ -29,9 +29,9 @@ import type {
   TaskStatus,
   TaskStep,
   TaskStepStatus,
-  WorkspaceSession,
   WorkerInfo,
   WorkerKind,
+  WorkspaceSession,
 } from '@coco/core'
 import { runJob } from '@coco/worker'
 import { simpleGit } from 'simple-git'
@@ -331,7 +331,11 @@ function toWorkspaceSession(row: Record<string, unknown>): WorkspaceSession {
     ...(row.active_worker_id ? { activeWorkerId: String(row.active_worker_id) } : {}),
     ...(row.latest_summary ? { latestSummary: String(row.latest_summary) } : {}),
     ...(row.last_review_decision
-      ? { lastReviewDecision: String(row.last_review_decision) as WorkspaceSession['lastReviewDecision'] }
+      ? {
+          lastReviewDecision: String(
+            row.last_review_decision,
+          ) as WorkspaceSession['lastReviewDecision'],
+        }
       : {}),
   }
 }
@@ -600,18 +604,27 @@ export function createDaemon(config: DaemonConfig = {}) {
   )
 
   async function detectRepo(rootPath: string): Promise<RepoRef> {
-    const existing = statements.getRepoByPath.get(rootPath) as Record<string, unknown> | undefined
+    const canonicalRoot = resolve(rootPath)
+    if (!existsSync(canonicalRoot) || !statSync(canonicalRoot).isDirectory()) {
+      throw new Error(`Repository path not found: ${canonicalRoot}`)
+    }
+    const git = simpleGit(canonicalRoot)
+    if (!(await git.checkIsRepo())) {
+      throw new Error(`Path is not a Git repository: ${canonicalRoot}`)
+    }
+    const existing = statements.getRepoByPath.get(canonicalRoot) as
+      | Record<string, unknown>
+      | undefined
     if (existing) {
       return toRepo(existing)
     }
 
-    const git = simpleGit(rootPath)
     const branch =
       (await git.revparse(['--abbrev-ref', 'HEAD']).catch(() => 'main')).trim() || 'main'
     const languageHints = detectLanguageHints(rootPath)
     const repo: RepoRef = {
       id: randomUUID(),
-      rootPath,
+      rootPath: canonicalRoot,
       defaultBranch: branch,
       languageHints,
       status: 'active',
@@ -755,7 +768,9 @@ export function createDaemon(config: DaemonConfig = {}) {
   }
 
   function listWorkspaceSessions(): WorkspaceSession[] {
-    return (statements.listWorkspaceSessions.all() as Record<string, unknown>[]).map(toWorkspaceSession)
+    return (statements.listWorkspaceSessions.all() as Record<string, unknown>[]).map(
+      toWorkspaceSession,
+    )
   }
 
   function listSessions(): SessionInfo[] {
@@ -815,7 +830,9 @@ export function createDaemon(config: DaemonConfig = {}) {
         ...(existing?.focusRepoId ? { focusRepoId: existing.focusRepoId } : {}),
       })
     }
-    return [...workspace.values()].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    return [...workspace.values()].sort((left, right) =>
+      right.updatedAt.localeCompare(left.updatedAt),
+    )
   }
 
   async function createWorkspaceSession(input: {
@@ -863,7 +880,11 @@ export function createDaemon(config: DaemonConfig = {}) {
     const hints = new Set<string>()
     if (existsSync(join(rootPath, 'package.json'))) hints.add('node')
     if (existsSync(join(rootPath, 'tsconfig.json'))) hints.add('ts')
-    if (existsSync(join(rootPath, 'pyproject.toml')) || existsSync(join(rootPath, 'requirements.txt'))) hints.add('python')
+    if (
+      existsSync(join(rootPath, 'pyproject.toml')) ||
+      existsSync(join(rootPath, 'requirements.txt'))
+    )
+      hints.add('python')
     if (existsSync(join(rootPath, 'Cargo.toml'))) hints.add('rust')
     if (existsSync(join(rootPath, 'go.mod'))) hints.add('go')
     if (existsSync(join(rootPath, '.git'))) hints.add('git')
@@ -872,7 +893,7 @@ export function createDaemon(config: DaemonConfig = {}) {
 
   function computeGoalRelevance(goal: string, rootPath: string, hints: string[]): number {
     const normalizedGoal = normalizeText(goal)
-    const name = normalizeText(rootPath.split('/').at(-1) ?? rootPath)
+    const name = normalizeText(basename(rootPath.replaceAll('\\', '/')))
     let score = normalizedGoal.includes(name) ? 1 : 0
     for (const hint of hints) {
       if (normalizedGoal.includes(hint)) score += 0.25
@@ -905,7 +926,10 @@ export function createDaemon(config: DaemonConfig = {}) {
         managed.set(repoRef.id, {
           repoId: repoRef.id,
           rootPath: repoRef.rootPath,
-          priority: Math.max(1, Math.round(computeGoalRelevance(session.goal, repoRef.rootPath, hints) * 100)),
+          priority: Math.max(
+            1,
+            Math.round(computeGoalRelevance(session.goal, repoRef.rootPath, hints) * 100),
+          ),
           status: 'idle',
           workerSurface: session.workerSurface,
           goalRelevance: computeGoalRelevance(session.goal, repoRef.rootPath, hints),
@@ -1378,15 +1402,13 @@ export function createDaemon(config: DaemonConfig = {}) {
           managedRepo.repoId === repo.id
             ? {
                 ...managedRepo,
-                status: (
-                  completed.result?.review?.decision === 'needs-human-approval'
-                    ? 'reviewing'
-                    : completed.result?.review?.decision === 'revise'
-                      ? 'active'
-                      : completed.job.status === 'failed'
-                        ? 'blocked'
-                        : 'idle'
-                ) as ManagedRepoState['status'],
+                status: (completed.result?.review?.decision === 'needs-human-approval'
+                  ? 'reviewing'
+                  : completed.result?.review?.decision === 'revise'
+                    ? 'active'
+                    : completed.job.status === 'failed'
+                      ? 'blocked'
+                      : 'idle') as ManagedRepoState['status'],
                 lastMilestone: completed.result?.review?.milestone ?? managedRepo.lastMilestone,
                 lastReviewOutcome:
                   completed.result?.review?.outcome ?? managedRepo.lastReviewOutcome,
@@ -1658,9 +1680,14 @@ export function createDaemon(config: DaemonConfig = {}) {
     }
 
     if (request.method === 'POST' && request.url === '/repos') {
-      const body = await readJSONBody(request)
-      const repo = await detectRepo(String(body.path))
-      send(201, repo)
+      try {
+        const body = await readJSONBody(request)
+        const repo = await detectRepo(String(body.path))
+        send(201, repo)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        send(400, { error: message })
+      }
       return
     }
 
@@ -1756,7 +1783,9 @@ export function createDaemon(config: DaemonConfig = {}) {
         ...(body.repoId ? { repoId: String(body.repoId) } : {}),
         ...(body.provider ? { provider: String(body.provider) } : {}),
         ...(body.model ? { model: String(body.model) } : {}),
-        ...(body.workerSurface ? { workerSurface: body.workerSurface as TaskCreateInput['workerSurface'] } : {}),
+        ...(body.workerSurface
+          ? { workerSurface: body.workerSurface as TaskCreateInput['workerSurface'] }
+          : {}),
         ...(body.managedRepoId ? { managedRepoId: String(body.managedRepoId) } : {}),
         ...(body.milestoneTarget ? { milestoneTarget: String(body.milestoneTarget) } : {}),
         ...(body.successCriteria ? { successCriteria: String(body.successCriteria) } : {}),
@@ -1808,7 +1837,9 @@ export function createDaemon(config: DaemonConfig = {}) {
       const session = await createWorkspaceSession({
         ...(body.id ? { id: String(body.id) } : {}),
         goal: String(body.goal ?? 'Workspace autopilot'),
-        ...(body.workerSurface ? { workerSurface: body.workerSurface as WorkspaceSession['workerSurface'] } : {}),
+        ...(body.workerSurface
+          ? { workerSurface: body.workerSurface as WorkspaceSession['workerSurface'] }
+          : {}),
         ...(Array.isArray(body.controlSurfaces)
           ? { controlSurfaces: body.controlSurfaces as WorkspaceSession['controlSurfaces'] }
           : {}),
@@ -1941,7 +1972,13 @@ export function createDaemon(config: DaemonConfig = {}) {
         }
         if (missionPath.endsWith('/steps')) {
           const missionId = missionPath.slice(0, -'/steps'.length)
-          send(200, await proxyJson<Record<string, unknown>[]>(controlPlaneUrl, `/missions/${missionId}/steps`))
+          send(
+            200,
+            await proxyJson<Record<string, unknown>[]>(
+              controlPlaneUrl,
+              `/missions/${missionId}/steps`,
+            ),
+          )
           return
         }
         if (missionPath.endsWith('/checkpoints')) {

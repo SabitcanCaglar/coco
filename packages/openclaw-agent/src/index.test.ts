@@ -440,7 +440,9 @@ describe('@coco/openclaw-agent', () => {
         )
       }
       if (url.includes('/chat/completions')) {
-        const body = JSON.parse(String(init?.body ?? '{}')) as { messages?: Array<{ content?: string }> }
+        const body = JSON.parse(String(init?.body ?? '{}')) as {
+          messages?: Array<{ content?: string }>
+        }
         const userPrompt = body.messages?.at(-1)?.content ?? ''
         if (userPrompt.includes('RAW PLANNER RESPONSE')) {
           return new Response(

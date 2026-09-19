@@ -56,7 +56,9 @@ export class CocoRuntimeWidget extends ReactWidget {
 
   protected async refresh(): Promise<void> {
     this.runtime = await this.runtimeService.getRuntimeStatus()
-    this.workspaceSession = await this.runtimeService.getWorkspaceSession('theia').catch(() => undefined)
+    this.workspaceSession = await this.runtimeService
+      .getWorkspaceSession('theia')
+      .catch(() => undefined)
     this.update()
   }
 

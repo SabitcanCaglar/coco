@@ -5,9 +5,9 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import {
-  COMMAND_DISPOSITIONS,
   APPROVAL_MODES,
   type ApprovalQueueItem,
+  COMMAND_DISPOSITIONS,
   DEFAULT_COMMAND_POLICY,
   DEFAULT_SCORING_MODEL,
   DOCTOR_PHASES,

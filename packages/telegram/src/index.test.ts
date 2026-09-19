@@ -440,5 +440,4 @@ describe('@coco/telegram', () => {
       await rm(stateDir, { recursive: true, force: true })
     }
   })
-
 })

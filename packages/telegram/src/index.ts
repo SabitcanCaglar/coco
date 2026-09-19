@@ -143,10 +143,14 @@ function acquireLock(stateDir: string): string {
     unlinkSync(lockPath)
   }
   try {
-    writeFileSync(lockPath, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }), {
-      encoding: 'utf-8',
-      flag: 'wx',
-    })
+    writeFileSync(
+      lockPath,
+      JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }),
+      {
+        encoding: 'utf-8',
+        flag: 'wx',
+      },
+    )
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     throw new Error(`Telegram bot lock already held at ${lockPath}. ${message}`)

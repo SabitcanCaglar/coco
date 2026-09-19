@@ -565,7 +565,10 @@ function getPlanExcerpt(repoPath?: string): string | undefined {
 
 function parseJsonObject<T>(raw: string): T | undefined {
   const trimmed = raw.trim()
-  const unfenced = trimmed.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()
+  const unfenced = trimmed
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim()
   try {
     return JSON.parse(unfenced) as T
   } catch {

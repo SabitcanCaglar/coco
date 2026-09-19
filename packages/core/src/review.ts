@@ -1,5 +1,5 @@
-import type { ReviewDecision } from './task.js'
 import type { CocoId, ISO8601Timestamp, Severity } from './shared.js'
+import type { ReviewDecision } from './task.js'
 
 export const REVIEW_CHECK_KINDS = ['lint', 'test', 'build', 'diff', 'policy'] as const
 

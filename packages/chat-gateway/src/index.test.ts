@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { createChatGateway, chatGatewayPackage } from './index.js'
+import { chatGatewayPackage, createChatGateway } from './index.js'
 
 describe('@coco/chat-gateway', () => {
   it('exposes package metadata', () => {
@@ -154,9 +154,7 @@ describe('@coco/chat-gateway', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(7)
     const missionCall = fetchImpl.mock.calls.find(
       (call) => String(call[0]).endsWith('/missions') && call[1]?.method === 'POST',
-    ) as
-      | [string, RequestInit]
-      | undefined
+    ) as [string, RequestInit] | undefined
     const [url, init] = missionCall ?? []
     expect(String(url)).toContain('/missions')
     expect(init?.method).toBe('POST')
@@ -268,9 +266,7 @@ describe('@coco/chat-gateway', () => {
     expect(result.reply).toContain('subs-api/docs/architecture.md')
     const missionCall = fetchImpl.mock.calls.find(
       (call) => String(call[0]).endsWith('/missions') && call[1]?.method === 'POST',
-    ) as
-      | [string, RequestInit]
-      | undefined
+    ) as [string, RequestInit] | undefined
     const missionBody = JSON.parse(String(missionCall?.[1]?.body ?? '{}')) as {
       execution_mode?: string
       active_repos?: string[]
@@ -293,8 +289,8 @@ describe('@coco/chat-gateway', () => {
             },
           ]),
           {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
+            status: 200,
+            headers: { 'content-type': 'application/json' },
           },
         )
       }
@@ -358,8 +354,16 @@ describe('@coco/chat-gateway', () => {
     expect(result.envelope.missionAction).toBe('status')
     expect(result.reply).toContain('Bu mission icin simdiki plan ozeti')
     expect(result.reply).toContain('subs-api/docs/architecture.md')
-    expect(fetchImpl.mock.calls.filter((call) => String(call[0]).endsWith('/missions/mission-existing/commands'))).toHaveLength(0)
-    expect(fetchImpl.mock.calls.filter((call) => String(call[0]).endsWith('/missions') && call[1]?.method === 'POST')).toHaveLength(0)
+    expect(
+      fetchImpl.mock.calls.filter((call) =>
+        String(call[0]).endsWith('/missions/mission-existing/commands'),
+      ),
+    ).toHaveLength(0)
+    expect(
+      fetchImpl.mock.calls.filter(
+        (call) => String(call[0]).endsWith('/missions') && call[1]?.method === 'POST',
+      ),
+    ).toHaveLength(0)
   })
 
   it('reads persistent thread history from the control plane', async () => {

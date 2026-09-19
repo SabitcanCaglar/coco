@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
 import { createInterface } from 'node:readline/promises'
 import { pathToFileURL } from 'node:url'
 
@@ -58,13 +58,15 @@ function renderUsage(): string {
 
 Usage:
 coco repo add <path> [--json]
+coco repos [--json]
+coco repos sync [manifest-path] [--json]
 coco agent ask <message> [--session NAME] [--json]
 coco apply <patch-file> [repo-path] [--json]
 coco doctor run <repo-or-path> [--json]
 coco tasks [--json]
 coco task inspect <task-id> [--json]
 coco sessions [--json]
-coco session create <goal> [--worker aider|roo|openclaw] [--json]
+coco session create <goal> [--worker aider|roo|openclaw] [--repo-root PATH ...] [--json]
 coco session inspect <session-id> [--json]
 coco session discover <session-id> [--json]
 coco session focus <session-id> <repo-id> [--json]
@@ -302,6 +304,17 @@ function parseFlag(args: string[], flag: string, fallback?: string): string | un
   const index = args.indexOf(flag)
   if (index === -1) return fallback
   return args[index + 1] ?? fallback
+}
+
+function parseRepeatedFlag(args: string[], flag: string): string[] {
+  const values: string[] = []
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] === flag && args[index + 1]) {
+      values.push(String(args[index + 1]))
+      index += 1
+    }
+  }
+  return values
 }
 
 function removeFlagValues(args: string[], flags: string[]): string[] {
@@ -680,6 +693,63 @@ export async function runCLI(
       return 0
     }
 
+    if (group === 'repos' && !action) {
+      const response = await daemonRequest('/repos')
+      if (!response?.ok) throw new Error('Unable to fetch repositories.')
+      const repos = (await response.json()) as RepoRef[]
+      printOutput(
+        io,
+        jsonMode,
+        repos,
+        repos.length
+          ? repos.map((repo) => `${repo.id}  ${repo.rootPath}`).join('\n')
+          : 'No repositories registered.',
+      )
+      return 0
+    }
+
+    if (group === 'repos' && action === 'sync') {
+      const manifestPath = resolve(subject ?? 'coco.projects.json')
+      if (!existsSync(manifestPath)) throw new Error(`Project manifest not found: ${manifestPath}`)
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8')) as {
+        projects?: Array<{ slug?: string; path?: string; enabled?: boolean }>
+      }
+      const projects = manifest.projects ?? []
+      const slugs = new Set<string>()
+      const paths = new Set<string>()
+      const registered: Array<{ slug: string; repo: RepoRef }> = []
+      for (const project of projects) {
+        if (project.enabled === false) continue
+        const slug = project.slug?.trim()
+        const configuredPath = project.path?.trim()
+        if (!slug || !configuredPath)
+          throw new Error('Every enabled project needs a slug and path.')
+        const rootPath = resolve(dirname(manifestPath), configuredPath)
+        if (slugs.has(slug)) throw new Error(`Duplicate project slug: ${slug}`)
+        if (paths.has(rootPath)) throw new Error(`Duplicate project path: ${rootPath}`)
+        slugs.add(slug)
+        paths.add(rootPath)
+        const response = await daemonRequest('/repos', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ path: rootPath }),
+        })
+        if (!response?.ok) {
+          const payload = (await response?.json().catch(() => ({}))) as { error?: string }
+          throw new Error(payload.error ?? `Unable to register project ${slug}.`)
+        }
+        registered.push({ slug, repo: (await response.json()) as RepoRef })
+      }
+      printOutput(
+        io,
+        jsonMode,
+        { manifestPath, projects: registered },
+        registered.map(({ slug, repo }) => `${slug}  ${repo.rootPath}`).join('\n') ||
+          'No enabled projects.',
+      )
+      return 0
+    }
+
     if (group === 'agent' && action === 'ask' && subject) {
       const sessionName = parseFlag(rest, '--session', 'local') ?? 'local'
       const message = [subject, ...removeFlagValues(rest, ['--session'])].join(' ').trim()
@@ -716,9 +786,8 @@ export async function runCLI(
         sessions.length === 0
           ? 'No sessions found.'
           : sessions
-              .map(
-                (session) =>
-                  `${String(session.id)}  ${String(session.status ?? 'active')}  ${String(session.goal ?? '')}`.trim(),
+              .map((session) =>
+                `${String(session.id)}  ${String(session.status ?? 'active')}  ${String(session.goal ?? '')}`.trim(),
               )
               .join('\n'),
       )
@@ -727,15 +796,17 @@ export async function runCLI(
 
     if (group === 'session' && action === 'create' && subject) {
       const worker = parseFlag(rest, '--worker', 'aider') ?? 'aider'
+      const repoRoots = parseRepeatedFlag(rest, '--repo-root').map((path) => resolve(path))
       const response = await daemonRequest('/sessions', {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
         },
         body: JSON.stringify({
-          goal: [subject, ...removeFlagValues(rest, ['--worker'])].join(' ').trim(),
+          goal: [subject, ...removeFlagValues(rest, ['--worker', '--repo-root'])].join(' ').trim(),
           workerSurface: worker,
           controlSurfaces: ['terminal', 'ide', 'telegram'],
+          repoRoots,
         }),
       })
       if (!response?.ok) {

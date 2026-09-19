@@ -31,9 +31,7 @@ async function readJson(request: IncomingMessage): Promise<Record<string, unknow
 }
 
 function approvalModeForStepClasses(stepClasses: StepClass[]): ApprovalMode {
-  return stepClasses.some((stepClass) =>
-    ['deploy', 'migration', 'destructive'].includes(stepClass),
-  )
+  return stepClasses.some((stepClass) => ['deploy', 'migration', 'destructive'].includes(stepClass))
     ? 'approval-heavy'
     : 'mixed'
 }
@@ -221,7 +219,8 @@ function fallbackInterpret(
       shouldDispatch: false,
       followUpKind: 'social',
       repoIntents,
-      socialReply: 'Buradayim. Missioni beraber tasiyip sana net checkpointler gecmeye devam edecegim.',
+      socialReply:
+        'Buradayim. Missioni beraber tasiyip sana net checkpointler gecmeye devam edecegim.',
     }
   }
 
@@ -284,9 +283,7 @@ function fallbackInterpret(
 
   if (
     latestMission &&
-    /\b(hangi dosya\w*|icerik\w*|plan\w*|neler ol\w*|ne olustur\w*|haber ver\w*)\b/.test(
-      normalized,
-    )
+    /\b(hangi dosya\w*|icerik\w*|plan\w*|neler ol\w*|ne olustur\w*|haber ver\w*)\b/.test(normalized)
   ) {
     return {
       action: 'status',
@@ -316,9 +313,7 @@ function fallbackInterpret(
     if (
       /\b(refactor|duzelt|fix|yaz)\b/.test(normalized) ||
       /\b(olustur\w*|kur\w*|gelistir\w*|yap\w*|tasarla\w*)\b/.test(normalized) ||
-      /\b(dosya\w*|modul\w*|proje\w*|backend\w*|frontend\w*|ui\b|api\b|oyun\b)\b/.test(
-        normalized,
-      )
+      /\b(dosya\w*|modul\w*|proje\w*|backend\w*|frontend\w*|ui\b|api\b|oyun\b)\b/.test(normalized)
     ) {
       stepClasses.push('edit')
     }
@@ -469,7 +464,9 @@ function deriveWorkstreams(
 }
 
 function derivePlannedFiles(targetRepos: string[], repoProfiles: RepoExecutionProfile[]): string[] {
-  const files = ['docs/missions/current-plan.md: hedefler, is paketleri, riskler ve checkpoint plani']
+  const files = [
+    'docs/missions/current-plan.md: hedefler, is paketleri, riskler ve checkpoint plani',
+  ]
 
   for (const repoId of targetRepos) {
     const profile = repoProfiles.find((candidate) => candidate.repoId === repoId)
@@ -521,7 +518,9 @@ function buildPlanSummary(
   ].join('\n')
 }
 
-function buildEtaClass(snapshot: StatusSnapshot): 'birazdan' | 'birkac dakika' | 'belirsiz' | 'blocked' {
+function buildEtaClass(
+  snapshot: StatusSnapshot,
+): 'birazdan' | 'birkac dakika' | 'belirsiz' | 'blocked' {
   if (snapshot.mission.status === 'blocked') return 'blocked'
   const activeCount = snapshot.steps.filter((step) =>
     ['running', 'queued', 'retryable'].includes(String(step.status ?? '')),
@@ -622,12 +621,23 @@ function buildCreateReply(
     ].join('\n')
   }
   if (mission.currentPhase === 'dispatch' || mission.status === 'running') {
-    return ['Bunu uzun soluklu bir mission olarak ele aliyorum; checkpoint alarak kendi kendime ilerleyecegim.', '', summary].join('\n')
+    return [
+      'Bunu uzun soluklu bir mission olarak ele aliyorum; checkpoint alarak kendi kendime ilerleyecegim.',
+      '',
+      summary,
+    ].join('\n')
   }
-  return ['Bunu calistirilabilir bir mission olarak aciyorum ve ilk adimi planliyorum.', '', summary].join('\n')
+  return [
+    'Bunu calistirilabilir bir mission olarak aciyorum ve ilk adimi planliyorum.',
+    '',
+    summary,
+  ].join('\n')
 }
 
-function resolveKnownTargetRepos(repoProfiles: RepoExecutionProfile[], repoIntents: string[]): string[] {
+function resolveKnownTargetRepos(
+  repoProfiles: RepoExecutionProfile[],
+  repoIntents: string[],
+): string[] {
   const normalizedIntents = repoIntents.map((value) => normalizeIntentText(value))
   const matches = new Set<string>()
   for (const profile of repoProfiles) {
@@ -661,7 +671,8 @@ export interface ChatGatewayConfig {
 }
 
 export function createChatGateway(config: ChatGatewayConfig = {}) {
-  const controlPlaneUrl = config.controlPlaneUrl ?? process.env.COCO_LANGGRAPH_URL ?? 'http://127.0.0.1:4100'
+  const controlPlaneUrl =
+    config.controlPlaneUrl ?? process.env.COCO_LANGGRAPH_URL ?? 'http://127.0.0.1:4100'
   const orchestratorUrl =
     config.orchestratorUrl ??
     process.env.COCO_ORCHESTRATOR_URL ??
@@ -689,9 +700,9 @@ export function createChatGateway(config: ChatGatewayConfig = {}) {
 
   async function buildStatusSnapshot(mission: Mission): Promise<StatusSnapshot> {
     const [steps, checkpoints, repoProfiles] = await Promise.all([
-      controlPlaneRequest<Array<Record<string, unknown>>>(`/missions/${mission.missionId}/steps`).catch(
-        () => [],
-      ),
+      controlPlaneRequest<Array<Record<string, unknown>>>(
+        `/missions/${mission.missionId}/steps`,
+      ).catch(() => []),
       controlPlaneRequest<Array<Record<string, unknown>>>(
         `/missions/${mission.missionId}/checkpoints`,
       ).catch(() => []),
@@ -810,23 +821,30 @@ export function createChatGateway(config: ChatGatewayConfig = {}) {
           ...(interpreted.model ? { model: interpreted.model } : {}),
         }),
       })
-      const refreshedProfiles = await controlPlaneRequest<RepoExecutionProfile[]>('/repo-profiles').catch(
-        () => repoProfiles,
-      )
+      const refreshedProfiles = await controlPlaneRequest<RepoExecutionProfile[]>(
+        '/repo-profiles',
+      ).catch(() => repoProfiles)
       reply = `${buildCreateReply(text, mission, mission.activeRepos, refreshedProfiles)}\n\nMission ${mission.missionId} acildi.`
-    } else if (interpreted.action === 'pause' || interpreted.action === 'resume' || interpreted.action === 'cancel') {
+    } else if (
+      interpreted.action === 'pause' ||
+      interpreted.action === 'resume' ||
+      interpreted.action === 'cancel'
+    ) {
       if (latestMission) {
-        mission = await controlPlaneRequest<Mission>(`/missions/${latestMission.missionId}/commands`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            command: interpreted.action,
-            idempotency_key: idempotencyKey,
-            surface_event_id: surfaceEventId,
-            expected_version: latestMission.version,
-            surface: input.surface ?? 'web',
-          }),
-        })
+        mission = await controlPlaneRequest<Mission>(
+          `/missions/${latestMission.missionId}/commands`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              command: interpreted.action,
+              idempotency_key: idempotencyKey,
+              surface_event_id: surfaceEventId,
+              expected_version: latestMission.version,
+              surface: input.surface ?? 'web',
+            }),
+          },
+        )
         reply =
           interpreted.action === 'pause'
             ? 'Aktif mission varsa duraklatma istegini uyguladim.'
@@ -836,7 +854,12 @@ export function createChatGateway(config: ChatGatewayConfig = {}) {
       } else {
         reply = 'Kontrol edilecek aktif bir mission bulamadim.'
       }
-    } else if (latestMission && (interpreted.followUpKind === 'plan' || interpreted.followUpKind === 'progress' || interpreted.followUpKind === 'eta')) {
+    } else if (
+      latestMission &&
+      (interpreted.followUpKind === 'plan' ||
+        interpreted.followUpKind === 'progress' ||
+        interpreted.followUpKind === 'eta')
+    ) {
       const snapshot = await buildStatusSnapshot(latestMission)
       if (interpreted.followUpKind === 'plan') {
         reply = [
@@ -846,8 +869,10 @@ export function createChatGateway(config: ChatGatewayConfig = {}) {
         ].join('\n')
       } else {
         reply =
-          (await withTimeout(summarizeStatusWithModel(snapshot).catch(() => undefined), 6_000)) ??
-          buildFallbackStatusSummary(snapshot)
+          (await withTimeout(
+            summarizeStatusWithModel(snapshot).catch(() => undefined),
+            6_000,
+          )) ?? buildFallbackStatusSummary(snapshot)
       }
       mission = latestMission
     } else if (interpreted.followUpKind === 'social') {
@@ -855,8 +880,10 @@ export function createChatGateway(config: ChatGatewayConfig = {}) {
     } else if (latestMission) {
       const snapshot = await buildStatusSnapshot(latestMission)
       reply =
-        (await withTimeout(summarizeStatusWithModel(snapshot).catch(() => undefined), 6_000)) ??
-        buildFallbackStatusSummary(snapshot)
+        (await withTimeout(
+          summarizeStatusWithModel(snapshot).catch(() => undefined),
+          6_000,
+        )) ?? buildFallbackStatusSummary(snapshot)
       mission = latestMission
     } else {
       reply = 'Aktif mission yok. Istersen hedefi tek mesajda yaz, ben mission olarak acayim.'
@@ -878,7 +905,9 @@ export function createChatGateway(config: ChatGatewayConfig = {}) {
     return { reply, envelope, ...(mission ? { mission } : {}) }
   }
 
-  async function getThread(threadId: string): Promise<{ threadId: string; messages: ThreadMessage[] }> {
+  async function getThread(
+    threadId: string,
+  ): Promise<{ threadId: string; messages: ThreadMessage[] }> {
     return controlPlaneRequest<{ threadId: string; messages: ThreadMessage[] }>(
       `/threads/${encodeURIComponent(threadId)}`,
     )
@@ -920,14 +949,18 @@ export function createChatGateway(config: ChatGatewayConfig = {}) {
       if (incomingRequest.method === 'GET' && /^\/missions\/[^/]+$/.test(url.pathname)) {
         const missionId = decodeURIComponent(url.pathname.split('/')[2] ?? '')
         response.writeHead(200, { 'content-type': 'application/json' })
-        response.end(JSON.stringify(await controlPlaneRequest<Mission>(`/missions/${missionId}/state`)))
+        response.end(
+          JSON.stringify(await controlPlaneRequest<Mission>(`/missions/${missionId}/state`)),
+        )
         return
       }
       if (incomingRequest.method === 'GET' && /^\/missions\/[^/]+\/events$/.test(url.pathname)) {
         const missionId = decodeURIComponent(url.pathname.split('/')[2] ?? '')
         response.writeHead(200, { 'content-type': 'application/json' })
         response.end(
-          JSON.stringify(await controlPlaneRequest<MissionEvent[]>(`/missions/${missionId}/events`)),
+          JSON.stringify(
+            await controlPlaneRequest<MissionEvent[]>(`/missions/${missionId}/events`),
+          ),
         )
         return
       }
@@ -951,7 +984,9 @@ export function createChatGateway(config: ChatGatewayConfig = {}) {
       response.end(JSON.stringify({ error: 'Not found.' }))
     } catch (error) {
       response.writeHead(500, { 'content-type': 'application/json' })
-      response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }))
+      response.end(
+        JSON.stringify({ error: error instanceof Error ? error.message : String(error) }),
+      )
     }
   })
 

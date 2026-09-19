@@ -68,7 +68,9 @@ describe('createDaemonClient', () => {
         return new Response(
           JSON.stringify({
             threadId: 'theia-main',
-            messages: [{ id: 'm1', role: 'assistant', text: 'ready', createdAt: new Date().toISOString() }],
+            messages: [
+              { id: 'm1', role: 'assistant', text: 'ready', createdAt: new Date().toISOString() },
+            ],
           }),
           {
             status: 200,

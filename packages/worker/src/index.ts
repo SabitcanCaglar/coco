@@ -4,7 +4,14 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-import type { ExperimentResult, Job, JobEvent, JobResult, LoopJobPayload, RepoRef } from '@coco/core'
+import type {
+  ExperimentResult,
+  Job,
+  JobEvent,
+  JobResult,
+  LoopJobPayload,
+  RepoRef,
+} from '@coco/core'
 import { DoctorRuntime } from '@coco/doctor'
 import { LLMRegistry } from '@coco/llm'
 import { runKarpathyLoop } from '@coco/loop'
@@ -53,7 +60,11 @@ function toLoopMode(provider?: string): 'auto' | 'deterministic' | 'ollama' | 'o
   }
 }
 
-function runExec(file: string, args: string[], cwd: string): Promise<{ stdout: string; stderr: string }> {
+function runExec(
+  file: string,
+  args: string[],
+  cwd: string,
+): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolvePromise, reject) => {
     execFile(file, args, { cwd }, (error, stdout, stderr) => {
       if (error) {
@@ -110,7 +121,13 @@ async function runAiderAdapter(
       .filter(Boolean)
       .join('\n\n')
 
-    const transcriptDir = join(repo.rootPath, '..', '.coco-artifacts', basename(repo.rootPath), 'aider')
+    const transcriptDir = join(
+      repo.rootPath,
+      '..',
+      '.coco-artifacts',
+      basename(repo.rootPath),
+      'aider',
+    )
     await mkdir(transcriptDir, { recursive: true })
     const transcriptPath = join(transcriptDir, `${branchName.replaceAll('/', '-')}.log`)
 
@@ -122,11 +139,21 @@ async function runAiderAdapter(
 
     const startedAt = Date.now()
     const { stdout, stderr } = await runExec('aider', args, worktreePath)
-    await writeFile(transcriptPath, [stdout.trim(), stderr.trim()].filter(Boolean).join('\n\n'), 'utf-8')
+    await writeFile(
+      transcriptPath,
+      [stdout.trim(), stderr.trim()].filter(Boolean).join('\n\n'),
+      'utf-8',
+    )
 
     const status = await simpleGit(worktreePath).status()
-    const head = (await simpleGit(worktreePath).revparse(['HEAD']).catch(() => '')).trim()
-    const diffSummary = await simpleGit(worktreePath).diffSummary([`${baseBranch}...HEAD`]).catch(() => undefined)
+    const head = (
+      await simpleGit(worktreePath)
+        .revparse(['HEAD'])
+        .catch(() => '')
+    ).trim()
+    const diffSummary = await simpleGit(worktreePath)
+      .diffSummary([`${baseBranch}...HEAD`])
+      .catch(() => undefined)
 
     return {
       hypothesisId: `aider-${Date.now()}`,
@@ -279,10 +306,12 @@ export async function runJob(job: Job, services: WorkerServices): Promise<JobRes
     executionSurface,
   })
   let latestExperiment: Record<string, unknown> | undefined =
-    executionSurface === 'aider' ? ((await runAiderAdapter(repo, loopPayload)) as unknown as Record<string, unknown> | undefined) : undefined
-  let loopSummary:
-    | Awaited<ReturnType<typeof runKarpathyLoop>>
-    | undefined
+    executionSurface === 'aider'
+      ? ((await runAiderAdapter(repo, loopPayload)) as unknown as
+          | Record<string, unknown>
+          | undefined)
+      : undefined
+  let loopSummary: Awaited<ReturnType<typeof runKarpathyLoop>> | undefined
   if (!latestExperiment || latestExperiment.status === 'error') {
     loopSummary = await runKarpathyLoop({
       projectPath: repo.rootPath,
@@ -293,7 +322,9 @@ export async function runJob(job: Job, services: WorkerServices): Promise<JobRes
       mode: toLoopMode(resolution.provider),
       model: resolution.model,
       ollamaUrl: 'http://127.0.0.1:11434',
-      ...(process.env.OPENROUTER_API_KEY ? { openRouterApiKey: process.env.OPENROUTER_API_KEY } : {}),
+      ...(process.env.OPENROUTER_API_KEY
+        ? { openRouterApiKey: process.env.OPENROUTER_API_KEY }
+        : {}),
       ...(process.env.OPENROUTER_BASE_URL
         ? { openRouterBaseUrl: process.env.OPENROUTER_BASE_URL }
         : {}),
@@ -308,9 +339,9 @@ export async function runJob(job: Job, services: WorkerServices): Promise<JobRes
     latestExperiment = loopSummary.results.at(-1) as unknown as Record<string, unknown> | undefined
   }
   const reviewPath =
-      latestExperiment?.status === 'validated' && typeof latestExperiment.worktreePath === 'string'
-        ? latestExperiment.worktreePath
-        : repo.rootPath
+    latestExperiment?.status === 'validated' && typeof latestExperiment.worktreePath === 'string'
+      ? latestExperiment.worktreePath
+      : repo.rootPath
   const reviewReport = await review.run({
     projectPath: reviewPath,
     patchApplied:
@@ -364,9 +395,10 @@ export async function runJob(job: Job, services: WorkerServices): Promise<JobRes
     report,
     ...(experiment ? { experiment } : {}),
     review: reviewReport,
-    summary: latestExperiment && !loopSummary
-      ? `Loop completed through ${executionSurface} with review decision ${reviewReport.decision ?? reviewReport.outcome}.`
-      : `Loop completed with ${loopSummary?.validated.length ?? 0} validated and ${loopSummary?.reverted.length ?? 0} reverted experiments.`,
+    summary:
+      latestExperiment && !loopSummary
+        ? `Loop completed through ${executionSurface} with review decision ${reviewReport.decision ?? reviewReport.outcome}.`
+        : `Loop completed with ${loopSummary?.validated.length ?? 0} validated and ${loopSummary?.reverted.length ?? 0} reverted experiments.`,
   }
 }
 

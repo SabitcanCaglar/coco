@@ -145,7 +145,9 @@ function hasTaskIntent(text: string): boolean {
 
 function renderClarificationHelp(activeRepoPath?: string): string {
   return [
-    activeRepoPath ? `Aktif repo: ${activeRepoPath}` : 'Hangi repoda ne yapmam gerektigini netlestirelim.',
+    activeRepoPath
+      ? `Aktif repo: ${activeRepoPath}`
+      : 'Hangi repoda ne yapmam gerektigini netlestirelim.',
     'Ne yapmami istedigini daha acik yaz.',
     'Ornekler:',
     '- repo yapisini analiz et',
@@ -223,7 +225,6 @@ function parseRepoMentions(workspace: WorkspaceSession, prompt: string) {
   })
   return matches.sort((left, right) => right.priority - left.priority)
 }
-
 
 function extractBackendRequirement(prompt: string): string | undefined {
   const normalized = normalize(prompt)
@@ -345,7 +346,9 @@ function resolveRepoFromText(repos: RepoRef[], text: string): RepoRef | undefine
     const rootPath = normalize(repo.rootPath)
     const localPath = normalize(displayPath)
     const name = normalize(displayPath.split('/').at(-1) ?? '')
-    return normalized.includes(rootPath) || normalized.includes(localPath) || normalized.includes(name)
+    return normalized.includes(rootPath) ||
+      normalized.includes(localPath) ||
+      normalized.includes(name)
       ? true
       : tokens.some((token) => name.includes(token))
   })
@@ -466,9 +469,7 @@ function renderRepoSelectionHelp(repos: RepoRef[]): string {
   if (discoveredProjects.length > 0) {
     return [
       'Hangi repoda calisacagimi once netlestirmem gerekiyor.',
-      ...discoveredProjects
-        .slice(0, 10)
-        .map((project) => `- ${project.name} -> ${project.path}`),
+      ...discoveredProjects.slice(0, 10).map((project) => `- ${project.name} -> ${project.path}`),
       '',
       'Ornek: "projeleri listele", "cognify-subs-api reposuna gec" ya da tam path ver',
     ].join('\n')
@@ -755,7 +756,12 @@ export function createSupervisor(config: SupervisorConfig = {}) {
       }
 
       if (includesAny(normalized, ['review yap', 'review now', 'inceleme yap'])) {
-        const { updatedSessions } = await ensureWorkspaceReady(config, sessionId, nextSessions, trimmed)
+        const { updatedSessions } = await ensureWorkspaceReady(
+          config,
+          sessionId,
+          nextSessions,
+          trimmed,
+        )
         const workspaceSessionId = updatedSessions[sessionId]?.workspaceSessionId ?? sessionId
         const job = await postSessionAction(config, workspaceSessionId, 'review', {})
         return {
@@ -877,10 +883,9 @@ export function createSupervisor(config: SupervisorConfig = {}) {
 
       const mode = inferMode(normalized)
       const workspaceSessionId = routedSessions[sessionId]?.workspaceSessionId ?? sessionId
-      const workspace =
-        routedSessions[sessionId]?.workspaceSessionId
-          ? await getWorkspaceSession(config, workspaceSessionId)
-          : undefined
+      const workspace = routedSessions[sessionId]?.workspaceSessionId
+        ? await getWorkspaceSession(config, workspaceSessionId)
+        : undefined
       const requestedRepos = workspace ? parseRepoMentions(workspace, trimmed) : []
       const backendRequirement = extractBackendRequirement(trimmed)
       if (workspace && backendRequirement) {
@@ -953,7 +958,9 @@ export function createSupervisor(config: SupervisorConfig = {}) {
         mode,
         sessionId,
         repoId: routedSessions[sessionId].activeRepoId,
-        ...(routedSessions[sessionId].provider ? { provider: routedSessions[sessionId].provider } : {}),
+        ...(routedSessions[sessionId].provider
+          ? { provider: routedSessions[sessionId].provider }
+          : {}),
         ...(routedSessions[sessionId].model ? { model: routedSessions[sessionId].model } : {}),
         ...(routedSessions[sessionId].workerSurface
           ? { workerSurface: routedSessions[sessionId].workerSurface }

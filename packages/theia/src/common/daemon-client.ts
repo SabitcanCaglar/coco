@@ -1,9 +1,9 @@
 import type {
+  ApprovalQueueItem,
   DesktopRuntimeStatus,
   Mission,
   MissionEvent,
   MonitorEvent,
-  ApprovalQueueItem,
   RepoExecutionProfile,
   SessionInfo,
   Task,

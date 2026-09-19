@@ -251,6 +251,16 @@ cp .env.example .env
 # Register a repo
 pnpm --filter @coco/cli exec coco repo add .
 
+# Register several machine-local checkouts from an ignored manifest
+cp coco.projects.example.json coco.projects.json
+# Edit the paths, then sync and inspect the registry
+pnpm --filter @coco/cli exec coco repos sync coco.projects.json
+pnpm --filter @coco/cli exec coco repos --json
+
+# Create one session with explicit project roots (repeat --repo-root as needed)
+pnpm --filter @coco/cli exec coco session create "Coordinate projects" \
+  --repo-root ../repo-a --repo-root ../repo-b --json
+
 # Run a doctor exam directly or through the local daemon
 pnpm --filter @coco/cli exec coco doctor run . --json
 

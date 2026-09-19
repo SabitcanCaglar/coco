@@ -482,6 +482,66 @@ describe('@coco/cli', () => {
     }
   })
 
+  it('syncs a portable multi-project manifest and passes explicit roots to sessions', async () => {
+    const repoOne = await createFixtureRepo()
+    const repoTwo = await createFixtureRepo()
+    const manifestDir = await mkdtemp(join(tmpdir(), 'coco-projects-'))
+    const manifestPath = join(manifestDir, 'coco.projects.json')
+    const dataDir = await mkdtemp(join(tmpdir(), 'coco-cli-projects-daemon-'))
+    const output: string[] = []
+    const daemon = createDaemon({ port: 0, dataDir })
+
+    await writeFile(
+      manifestPath,
+      JSON.stringify({
+        projects: [
+          { slug: 'first', path: repoOne },
+          { slug: 'second', path: repoTwo },
+        ],
+      }),
+    )
+
+    try {
+      await daemon.start()
+      process.env.COCO_DAEMON_URL = daemon.url()
+      const io = {
+        write: (message: string) => output.push(message),
+        error: (message: string) => output.push(`ERR:${message}`),
+      }
+
+      await expect(runCLI(['repos', 'sync', manifestPath, '--json'], io)).resolves.toBe(0)
+      const synced = JSON.parse(output.at(-1) ?? '{}') as { projects?: Array<{ slug: string }> }
+      expect(synced.projects?.map((project) => project.slug)).toEqual(['first', 'second'])
+
+      output.length = 0
+      await expect(
+        runCLI(
+          [
+            'session',
+            'create',
+            'Coordinate both projects',
+            '--repo-root',
+            repoOne,
+            '--repo-root',
+            repoTwo,
+            '--json',
+          ],
+          io,
+        ),
+      ).resolves.toBe(0)
+      const session = JSON.parse(output.at(-1) ?? '{}') as { repoRoots?: string[]; goal?: string }
+      expect(session.repoRoots).toEqual([repoOne, repoTwo])
+      expect(session.goal).toBe('Coordinate both projects')
+    } finally {
+      process.env.COCO_DAEMON_URL = undefined
+      await daemon.stop()
+      await rm(dataDir, { recursive: true, force: true })
+      await rm(manifestDir, { recursive: true, force: true })
+      await rm(repoOne, { recursive: true, force: true })
+      await rm(repoTwo, { recursive: true, force: true })
+    }
+  })
+
   it('lists, watches tasks and shows worker state from the daemon', async () => {
     const repoPath = await createFixtureRepo()
     const dataDir = await mkdtemp(join(tmpdir(), 'coco-cli-tasks-'))

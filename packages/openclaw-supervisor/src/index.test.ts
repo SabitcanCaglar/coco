@@ -187,7 +187,11 @@ describe('@coco/openclaw-supervisor', () => {
 
     try {
       const supervisor = createSupervisor({ daemonUrl: 'http://127.0.0.1:3000' })
-      const result = await supervisor.handleMessage('cognify-subs-api analiz et', 'session-local-path', {})
+      const result = await supervisor.handleMessage(
+        'cognify-subs-api analiz et',
+        'session-local-path',
+        {},
+      )
       expect(result.reply).toContain(localRepoPath)
       expect(result.reply).not.toContain('/host-home/Desktop/cognify-subs-api')
     } finally {

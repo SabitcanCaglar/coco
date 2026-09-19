@@ -9,6 +9,7 @@ coverage/
 .turbo/
 PLAN.md
 .coco/
+coco.projects.json
 .docker-data/
 
 # Theia browser app — compiled frontend bundles

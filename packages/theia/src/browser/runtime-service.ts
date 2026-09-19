@@ -1,11 +1,11 @@
 import { injectable } from 'inversify'
 
 import type {
+  ApprovalQueueItem,
   DesktopDaemonMode,
   DesktopRuntimeStatus,
   Mission,
   MissionEvent,
-  ApprovalQueueItem,
   RepoExecutionProfile,
   Task,
   TaskControlAction,
