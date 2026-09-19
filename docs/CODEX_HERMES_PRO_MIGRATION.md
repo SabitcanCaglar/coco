@@ -107,6 +107,17 @@ After configuring `coco.projects.json`, the Windows/WSL worker is checked withou
 pnpm host:doctor
 ```
 
+The checked-in `scripts/windows/install.ps1` is the supported provisioning entrypoint. It enables
+WSL2, creates a dedicated `coco` Linux account, installs Docker Engine inside WSL (not Docker
+Desktop), installs a checksum-verified Node binary and pinned pnpm, clones the canonical checkout,
+starts Coco as a systemd service, and runs the repository quality gate plus the real headless
+Chromium smoke test. It can be rerun safely and refuses to update a dirty checkout.
+
+Because this is a dedicated worker, the Linux account has passwordless sudo and Codex is configured
+with approval policy `never` and `danger-full-access`. That is deliberate but materially risky; do
+not use this profile on a personal or shared workstation. ChatGPT subscription authentication still
+requires the one official human browser-login step (`codex login`). No API credential is collected.
+
 Acceptance:
 
 - A fresh clone resolves dependencies without machine-specific path edits.

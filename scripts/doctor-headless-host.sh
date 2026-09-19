@@ -28,7 +28,7 @@ else
   printf 'warn expected WSL2/Linux for the Windows worker; detected %s\n' "$(uname -s)"
 fi
 
-if docker info >/dev/null 2>&1; then
+if docker info >/dev/null 2>&1 || sudo -n docker info >/dev/null 2>&1; then
   printf 'ok   Docker engine reachable\n'
 else
   printf 'miss Docker engine is not reachable\n' >&2

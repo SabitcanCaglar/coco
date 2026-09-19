@@ -13,6 +13,7 @@
     "harness:resume": "bash scripts/omp-harness.sh resume",
     "harness:doctor": "bash scripts/omp-harness.sh doctor",
     "host:doctor": "bash scripts/doctor-headless-host.sh",
+    "test:browser:headless": "node scripts/headless-browser-smoke.mjs",
     "loop": "tsx packages/loop/src/karpathy-loop.ts",
     "build": "pnpm -r build",
     "theia:runtime:build": "pnpm --filter @coco/theia-runtime build",
@@ -29,10 +30,11 @@
     "typecheck": "pnpm -r typecheck"
   },
   "devDependencies": {
+    "@biomejs/biome": "^1.9.0",
     "@types/node": "^24.0.0",
     "@types/react": "^18.3.12",
-    "@biomejs/biome": "^1.9.0",
     "@vitest/coverage-v8": "^2.0.0",
+    "playwright": "1.63.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "vitest": "^2.0.0"

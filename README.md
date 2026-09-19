@@ -290,6 +290,32 @@ pnpm --filter @coco/cli exec coco loop fanout ../repo-a ../repo-b ../repo-c \
 pnpm --filter @coco/cli exec coco jobs list --json
 ```
 
+### Headless Windows worker
+
+The Windows host can be provisioned as an unattended WSL2 worker. Docker Engine, Node, pnpm,
+Codex CLI, Coco, the systemd daemon, the full quality gate, and a real headless Chromium smoke test
+are installed and verified without opening Docker Desktop or a browser window.
+
+Run this in PowerShell; it elevates through UAC when required:
+
+```powershell
+$u="https://raw.githubusercontent.com/SabitcanCaglar/coco/codex/m6-first-real-fixers/scripts/windows/install.ps1"; $p="$env:TEMP\coco-install.ps1"; Invoke-WebRequest $u -OutFile $p; powershell -NoProfile -ExecutionPolicy Bypass -File $p
+```
+
+If Windows enables WSL features for the first time, restart once and run the same command again.
+The installer is idempotent and refuses to overwrite a dirty checkout. Its log is stored under
+`C:\ProgramData\Coco\bootstrap`; the canonical checkout lives at `/home/coco/projects/coco` inside
+WSL, not under `/mnt/c`.
+
+The dedicated `coco` WSL account is intentionally configured for unattended full access
+(`NOPASSWD` sudo, Codex approval policy `never`, sandbox `danger-full-access`). Use this only on the
+dedicated worker. The installer never asks for an API key. After installation, the only manual step
+is the official ChatGPT subscription login:
+
+```powershell
+wsl -d Ubuntu-24.04 -u coco -- codex login
+```
+
 ### Theia IDE (First Vertical Slice)
 
 `coco` now includes the first Theia-facing packages for the medium-term OSS IDE direction:
