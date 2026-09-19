@@ -112,6 +112,9 @@ WSL2, creates a dedicated `coco` Linux account, installs Docker Engine inside WS
 Desktop), installs a checksum-verified Node binary and pinned pnpm, clones the canonical checkout,
 starts Coco as a systemd service, and runs the repository quality gate plus the real headless
 Chromium smoke test. It can be rerun safely and refuses to update a dirty checkout.
+Every prerequisite is probed independently; compatible existing WSL features, distro, Docker,
+Node, pnpm, Codex CLI, browser, and systemd unit installations are reported as `skip` rather than
+reinstalled. Verification is intentionally rerun after a clean repository update.
 
 Because this is a dedicated worker, the Linux account has passwordless sudo and Codex is configured
 with approval policy `never` and `danger-full-access`. That is deliberate but materially risky; do

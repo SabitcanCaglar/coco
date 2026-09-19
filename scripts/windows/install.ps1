@@ -46,33 +46,53 @@ $logPath = Join-Path $stateRoot 'install.log'
 Start-Transcript -Path $logPath -Append | Out-Null
 
 try {
-    Write-Host "[1/4] Enabling WSL2 prerequisites"
-    & dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart | Out-Host
-    if ($LASTEXITCODE -notin @(0, 3010)) { throw "Unable to enable WSL (exit $LASTEXITCODE)." }
-    $needsRestart = $LASTEXITCODE -eq 3010
-    & dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart | Out-Host
-    if ($LASTEXITCODE -notin @(0, 3010)) { throw "Unable to enable VirtualMachinePlatform (exit $LASTEXITCODE)." }
-    $needsRestart = $needsRestart -or $LASTEXITCODE -eq 3010
+    Write-Host "[1/4] Checking WSL2 prerequisites"
+    $needsRestart = $false
+    foreach ($featureName in @('Microsoft-Windows-Subsystem-Linux', 'VirtualMachinePlatform')) {
+        $feature = Get-WindowsOptionalFeature -Online -FeatureName $featureName
+        if ($feature.State -eq 'Enabled') {
+            Write-Host "skip $featureName is already enabled"
+            continue
+        }
+        Write-Host "install enabling $featureName"
+        $result = Enable-WindowsOptionalFeature -Online -FeatureName $featureName -All -NoRestart
+        $needsRestart = $needsRestart -or [bool]$result.RestartNeeded
+    }
     if ($needsRestart) {
         Write-Host "Windows restart is required. Restart, then run the same installer command again."
         exit 3010
     }
 
-    Write-Host "[2/4] Installing and configuring $Distro"
-    & wsl.exe --update | Out-Host
-    if ($LASTEXITCODE -ne 0) { throw "wsl --update failed (exit $LASTEXITCODE)." }
+    Write-Host "[2/4] Checking and configuring $Distro"
+    & wsl.exe --status | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "update WSL runtime is unavailable or stale"
+        & wsl.exe --update | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw "wsl --update failed (exit $LASTEXITCODE)." }
+    } else {
+        Write-Host "skip WSL runtime is already available"
+    }
     & wsl.exe --set-default-version 2 | Out-Host
     $installed = @(& wsl.exe --list --quiet) -replace "`0", '' | ForEach-Object { $_.Trim() }
     if ($installed -notcontains $Distro) {
+        Write-Host "install $Distro"
         & wsl.exe --install --distribution $Distro --no-launch | Out-Host
         if ($LASTEXITCODE -ne 0) { throw "WSL distribution install failed (exit $LASTEXITCODE)." }
+    } else {
+        Write-Host "skip $Distro is already installed"
     }
 
-    $rootSetup = "id -u '$LinuxUser' >/dev/null 2>&1 || useradd -m -s /bin/bash '$LinuxUser'; echo '$LinuxUser ALL=(ALL) NOPASSWD:ALL' >/etc/sudoers.d/coco; chmod 0440 /etc/sudoers.d/coco; printf '[boot]\nsystemd=true\n[user]\ndefault=$LinuxUser\n' >/etc/wsl.conf"
-    & wsl.exe --distribution $Distro --user root -- bash -lc $rootSetup | Out-Host
+    $rootSetup = "changed=0; id -u '$LinuxUser' >/dev/null 2>&1 || { useradd -m -s /bin/bash '$LinuxUser'; changed=1; }; printf '$LinuxUser ALL=(ALL) NOPASSWD:ALL\n' >/etc/sudoers.d/coco; chmod 0440 /etc/sudoers.d/coco; touch /etc/wsl.conf; grep -Eq '^[[:space:]]*systemd[[:space:]]*=[[:space:]]*true' /etc/wsl.conf || { printf '\n[boot]\nsystemd=true\n' >>/etc/wsl.conf; changed=1; }; grep -Eq '^[[:space:]]*default[[:space:]]*=[[:space:]]*$LinuxUser' /etc/wsl.conf || { printf '\n[user]\ndefault=$LinuxUser\n' >>/etc/wsl.conf; changed=1; }; echo COCO_WSL_CHANGED=`$changed"
+    $rootOutput = @(& wsl.exe --distribution $Distro --user root -- bash -lc $rootSetup)
+    $rootOutput | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "WSL user/systemd setup failed (exit $LASTEXITCODE)." }
-    & wsl.exe --shutdown
-    Start-Sleep -Seconds 3
+    if ($rootOutput -contains 'COCO_WSL_CHANGED=1') {
+        Write-Host "restart WSL to activate new systemd/user settings"
+        & wsl.exe --shutdown
+        Start-Sleep -Seconds 3
+    } else {
+        Write-Host "skip WSL user and systemd settings are already configured"
+    }
 
     Write-Host "[3/4] Bootstrapping Coco inside WSL2"
     $repoSlug = $RepoUrl -replace '^https://github\.com/', '' -replace '\.git$', ''

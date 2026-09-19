@@ -22,22 +22,52 @@ if [[ -n "${OPENAI_API_KEY:-}" || -n "${OPENROUTER_API_KEY:-}" ]]; then
   echo 'Paid API credentials are present. Unset them before a Pro-only installation.' >&2
   exit 1
 fi
-sudo apt-get update
-sudo apt-get install -y ca-certificates curl git jq ripgrep xz-utils build-essential python3 python3-venv docker.io docker-compose-v2
-sudo systemctl enable --now docker
+base_packages=(ca-certificates curl git jq ripgrep xz-utils build-essential python3 python3-venv)
+missing_packages=()
+for package_name in "${base_packages[@]}"; do
+  dpkg-query -W -f='${Status}' "$package_name" 2>/dev/null | grep -q 'ok installed' || missing_packages+=("$package_name")
+done
+if ((${#missing_packages[@]})); then
+  echo "install missing system packages: ${missing_packages[*]}"
+  sudo apt-get update
+  sudo apt-get install -y "${missing_packages[@]}"
+else
+  echo 'skip base system packages are already installed'
+fi
+
+if command -v docker >/dev/null 2>&1; then
+  echo 'skip Docker CLI is already installed'
+else
+  echo 'install Docker Engine'
+  sudo apt-get update
+  sudo apt-get install -y docker.io
+fi
+if ! sudo docker info >/dev/null 2>&1; then
+  sudo systemctl enable --now docker
+fi
+if sudo docker compose version >/dev/null 2>&1; then
+  echo 'skip Docker Compose is already installed'
+else
+  echo 'install Docker Compose plugin'
+  sudo apt-get update
+  sudo apt-get install -y docker-compose-v2
+fi
 sudo usermod -aG docker "$USER"
 
 mkdir -p "$HOME/.local/bin" "$HOME/.local/lib" "$HOME/projects"
-NODE_VERSION="$(curl -fsSL https://nodejs.org/dist/index.json | jq -r '[.[] | select(.version | startswith("v24."))][0].version')"
-[[ "$NODE_VERSION" =~ ^v24\.[0-9]+\.[0-9]+$ ]] || { echo 'Unable to resolve Node 24.' >&2; exit 1; }
-case "$(uname -m)" in
-  x86_64) NODE_ARCH="x64" ;;
-  aarch64) NODE_ARCH="arm64" ;;
-  *) echo "Unsupported CPU architecture: $(uname -m)" >&2; exit 1 ;;
-esac
-NODE_ARCHIVE="node-${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz"
-NODE_ROOT="$HOME/.local/lib/node-${NODE_VERSION}"
-if [[ ! -x "$NODE_ROOT/bin/node" ]]; then
+if command -v node >/dev/null 2>&1 && [[ "$(node --version)" == v24.* ]] && command -v corepack >/dev/null 2>&1; then
+  echo "skip compatible Node is already installed: $(node --version)"
+else
+  NODE_VERSION="$(curl -fsSL https://nodejs.org/dist/index.json | jq -r '[.[] | select(.version | startswith("v24."))][0].version')"
+  [[ "$NODE_VERSION" =~ ^v24\.[0-9]+\.[0-9]+$ ]] || { echo 'Unable to resolve Node 24.' >&2; exit 1; }
+  case "$(uname -m)" in
+    x86_64) NODE_ARCH="x64" ;;
+    aarch64) NODE_ARCH="arm64" ;;
+    *) echo "Unsupported CPU architecture: $(uname -m)" >&2; exit 1 ;;
+  esac
+  NODE_ARCHIVE="node-${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz"
+  NODE_ROOT="$HOME/.local/lib/node-${NODE_VERSION}"
+  echo "install Node ${NODE_VERSION}"
   temp_dir="$(mktemp -d)"
   trap 'rm -rf "$temp_dir"' EXIT
   curl -fsSLO --output-dir "$temp_dir" "https://nodejs.org/dist/${NODE_VERSION}/${NODE_ARCHIVE}"
@@ -45,14 +75,21 @@ if [[ ! -x "$NODE_ROOT/bin/node" ]]; then
   (cd "$temp_dir" && grep " ${NODE_ARCHIVE}$" SHASUMS256.txt | sha256sum -c -)
   mkdir -p "$NODE_ROOT"
   tar -xJf "$temp_dir/$NODE_ARCHIVE" --strip-components=1 -C "$NODE_ROOT"
+  for binary in node npm npx corepack; do ln -sfn "$NODE_ROOT/bin/$binary" "$HOME/.local/bin/$binary"; done
 fi
-for binary in node npm npx corepack; do ln -sfn "$NODE_ROOT/bin/$binary" "$HOME/.local/bin/$binary"; done
 export PATH="$HOME/.local/bin:$PATH"
-corepack enable --install-directory "$HOME/.local/bin"
-corepack prepare pnpm@10.32.1 --activate
+if command -v pnpm >/dev/null 2>&1 && [[ "$(pnpm --version)" == '10.32.1' ]]; then
+  echo 'skip pnpm 10.32.1 is already installed'
+else
+  corepack enable --install-directory "$HOME/.local/bin"
+  corepack prepare pnpm@10.32.1 --activate
+fi
 
 if ! command -v codex >/dev/null 2>&1; then
+  echo 'install Codex CLI'
   curl -fsSL https://chatgpt.com/codex/install.sh | sh
+else
+  echo 'skip Codex CLI is already installed'
 fi
 export PATH="$HOME/.local/bin:$HOME/.codex/bin:$PATH"
 mkdir -p "$HOME/.codex"
@@ -80,16 +117,26 @@ fi
 cd "$REPO_ROOT"
 [[ -f coco.projects.json ]] || cp coco.projects.example.json coco.projects.json
 pnpm install --frozen-lockfile
-pnpm exec playwright install --with-deps chromium
+playwright_chromium="$(node -e "const { chromium } = require('playwright'); process.stdout.write(chromium.executablePath())")"
+if [[ -x "$playwright_chromium" ]]; then
+  echo 'skip Playwright Chromium is already installed'
+else
+  pnpm exec playwright install --with-deps chromium
+fi
 pnpm build
 
 mkdir -p "$HOME/.local/state/coco"
 service_file="$(mktemp)"
 sed "s|@@REPO_ROOT@@|$REPO_ROOT|g; s|@@HOME@@|$HOME|g; s|@@USER@@|$USER|g" scripts/windows/coco-daemon.service.in >"$service_file"
-sudo install -m 0644 "$service_file" /etc/systemd/system/coco-daemon.service
+if sudo test -f /etc/systemd/system/coco-daemon.service && sudo cmp -s "$service_file" /etc/systemd/system/coco-daemon.service; then
+  echo 'skip Coco systemd unit is already installed'
+else
+  sudo install -m 0644 "$service_file" /etc/systemd/system/coco-daemon.service
+fi
 rm -f "$service_file"
 sudo systemctl daemon-reload
-sudo systemctl enable --now coco-daemon.service
+sudo systemctl enable coco-daemon.service
+sudo systemctl restart coco-daemon.service
 
 if [[ "$SKIP_TESTS" == false ]]; then
   pnpm host:doctor

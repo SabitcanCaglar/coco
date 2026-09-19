@@ -303,7 +303,9 @@ $u="https://raw.githubusercontent.com/SabitcanCaglar/coco/codex/m6-first-real-fi
 ```
 
 If Windows enables WSL features for the first time, restart once and run the same command again.
-The installer is idempotent and refuses to overwrite a dirty checkout. Its log is stored under
+The installer is idempotent: it detects and skips compatible WSL, Ubuntu, Docker Engine/Compose,
+Node 24, pnpm, Codex CLI, and Playwright Chromium installations. It still updates the clean Coco
+checkout and reruns verification, and it refuses to overwrite a dirty checkout. Its log is stored under
 `C:\ProgramData\Coco\bootstrap`; the canonical checkout lives at `/home/coco/projects/coco` inside
 WSL, not under `/mnt/c`.
 
