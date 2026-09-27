@@ -1,14 +1,18 @@
 modelRoleStorage: project
 modelRoles:
-  default: openrouter/qwen/qwen3-coder-next
-  smol: openrouter/z-ai/glm-5.3-flash
-  slow: openrouter/deepseek/deepseek-v3.2
-  plan: openrouter/qwen/qwen3-coder-next
-  advisor: openrouter/z-ai/glm-5.3-flash
+  default: openrouter/z-ai/glm-5.3
+  smol: openrouter/deepseek/deepseek-v4.1-flash
+  slow: openrouter/deepseek/deepseek-v4-pro-0813
+  plan: openrouter/z-ai/glm-5.3
+  advisor: openrouter/z-ai/glm-5.3
 
 enabledProviders:
   - openrouter
 enabledModels:
+  - openrouter/z-ai/glm-5.3
+  - openrouter/deepseek/deepseek-v4.1-flash
+  - openrouter/deepseek/deepseek-v4-flash-0731
+  - openrouter/deepseek/deepseek-v4-pro-0813
   - openrouter/qwen/qwen3-coder-next
   - openrouter/z-ai/glm-5.3-flash
   - openrouter/deepseek/deepseek-v3.2
@@ -28,21 +32,21 @@ retry:
   fallbackRevertPolicy: cooldown-expiry
   fallbackChains:
     default:
-      - openrouter/z-ai/glm-5.3-flash
-      - openrouter/deepseek/deepseek-v3.2
+      - openrouter/qwen/qwen3-coder-next
+      - openrouter/deepseek/deepseek-v4-pro-0813
       - openrouter/moonshotai/kimi-k2.5
     plan:
-      - openrouter/deepseek/deepseek-v3.2
-      - openrouter/moonshotai/kimi-k2.5
-    slow:
-      - openrouter/moonshotai/kimi-k2.5
-      - openrouter/qwen/qwen3-coder-flash
-    smol:
-      - openrouter/stepfun/step-3.5-flash:free
+      - openrouter/deepseek/deepseek-v4-pro-0813
       - openrouter/qwen/qwen3-coder-next
-    openrouter/qwen/qwen3-coder-next:
-      - openrouter/z-ai/glm-5.3-flash
-      - openrouter/deepseek/deepseek-v3.2
+    slow:
+      - openrouter/z-ai/glm-5.3
+      - openrouter/qwen/qwen3-coder-next
+    smol:
+      - openrouter/deepseek/deepseek-v4-flash-0731
+      - openrouter/stepfun/step-3.5-flash:free
+    openrouter/z-ai/glm-5.3:
+      - openrouter/deepseek/deepseek-v4-pro-0813
+      - openrouter/qwen/qwen3-coder-next
 
 prewalk:
   enabled: true

@@ -14,6 +14,12 @@ if ! command -v omp >/dev/null 2>&1; then
   exit 127
 fi
 
+OMP_VERSION="$(omp --version | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | tail -n 1)"
+if [[ -n "$OMP_VERSION" ]] && [[ "$(printf '%s\n' 18.3.2 "$OMP_VERSION" | sort -V | head -n 1)" != "18.3.2" ]]; then
+  echo "error: OMP $OMP_VERSION is older than the supported project minimum 18.3.2; update with: npm install -g @oh-my-pi/pi-coding-agent@18.3.2" >&2
+  exit 1
+fi
+
 if [[ -z "${OPENROUTER_API_KEY:-}" && -f "$ROOT_DIR/.env" ]]; then
   OPENROUTER_API_KEY="$(sed -n 's/^OPENROUTER_API_KEY=//p' "$ROOT_DIR/.env" | tail -n 1)"
   OPENROUTER_API_KEY="${OPENROUTER_API_KEY%\"}"
@@ -32,10 +38,10 @@ COMMON=(
   --cwd "$ROOT_DIR"
   --config "$CONFIG_FILE"
   --session-dir "$SESSION_DIR"
-  --model openrouter/qwen/qwen3-coder-next
-  --smol openrouter/z-ai/glm-5.3-flash
-  --slow openrouter/deepseek/deepseek-v3.2
-  --plan openrouter/qwen/qwen3-coder-next
+  --model openrouter/z-ai/glm-5.3
+  --smol openrouter/deepseek/deepseek-v4.1-flash
+  --slow openrouter/deepseek/deepseek-v4-pro-0813
+  --plan openrouter/z-ai/glm-5.3
 )
 
 case "$MODE" in
@@ -49,15 +55,18 @@ case "$MODE" in
     fi
     PROMPT="$(cat "$ROOT_DIR/.omp/prompts/long-run.md")"$'\n\n'"USER TASK:"$'\n'"$*"
     if command -v caffeinate >/dev/null 2>&1; then
-      exec caffeinate -i omp "${COMMON[@]}" --plan-yolo --plan-yolo-into smol --approval-mode yolo --max-time 8h "$PROMPT"
+      exec caffeinate -i omp "${COMMON[@]}" --plan-yolo --approval-mode yolo --max-time 8h "$PROMPT"
     fi
-    exec omp "${COMMON[@]}" --plan-yolo --plan-yolo-into smol --approval-mode yolo --max-time 8h "$PROMPT"
+    exec omp "${COMMON[@]}" --plan-yolo --approval-mode yolo --max-time 8h "$PROMPT"
     ;;
   resume)
     exec omp "${COMMON[@]}" --resume "$@"
     ;;
   doctor)
     echo "OMP: $(omp --version)"
+    if [[ -n "$OMP_VERSION" ]]; then
+      echo "Project minimum: 18.3.2 (installed $OMP_VERSION)"
+    fi
     echo "Config: $CONFIG_FILE"
     echo "Sessions: $SESSION_DIR"
     omp models openrouter --config "$CONFIG_FILE" --json >/dev/null

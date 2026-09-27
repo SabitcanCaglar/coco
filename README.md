@@ -217,7 +217,7 @@ pnpm install
 
 ### OMP long-running coding harness
 
-The repository includes a project-scoped OMP configuration with OpenRouter model routing,
+The repository includes a project-scoped OMP configuration with cost-conscious OpenRouter model routing,
 fallbacks, isolated subagents, checkpoints, context compaction, and Chromium automation.
 
 ```bash
@@ -234,9 +234,21 @@ pnpm harness:resume
 pnpm harness:doctor
 ```
 
-Set `OPENROUTER_API_KEY` in the shell or the repository `.env`. OMP sessions and screenshots are
+The default and planning routes use GLM 5.3 (the reasoning model, not Flash) for complex coding work.
+DeepSeek V4.1 Flash is limited to the `smol` helper role; DeepSeek V4 Pro is the slow/deep fallback,
+and Qwen3 Coder Next is the coding fallback. All OpenRouter calls are billed by token. Current listed
+prices are approximately $0.45/M input and $2/M output for GLM 5.3, $0.13/M and $0.52/M for V4.1
+Flash, and $0.66/M and $1.98/M for V4 Pro; provider discounts and effective prices vary. Set
+`OPENROUTER_API_KEY` in the shell or repository `.env` to enable
+these routes. Codex ChatGPT subscription authentication does not provide an OpenRouter balance;
+the OpenRouter key is optional and only needed when using the Pi/OMP China-model route.
+OMP sessions and screenshots are
 stored under `.runtime/omp/`. The long-running command prevents macOS idle sleep, but never pushes,
 merges, publishes, or deploys unless explicitly instructed.
+
+The harness uses Pi/OMP 18.3.2 or newer. Install or update it with
+`npm install -g @oh-my-pi/pi-coding-agent@18.3.2`; `pnpm harness:doctor` checks the installed
+version, model catalog, workspace dependencies, and required tools.
 
 For a command-free launcher on macOS, double-click `Coco.command` in Finder. It opens a terminal
 control menu for starting, resuming, and checking harness runs. The same menu is available with
@@ -311,12 +323,22 @@ WSL, not under `/mnt/c`.
 
 The dedicated `coco` WSL account is intentionally configured for unattended full access
 (`NOPASSWD` sudo, Codex approval policy `never`, sandbox `danger-full-access`). Use this only on the
-dedicated worker. The installer never asks for an API key. After installation, the only manual step
-is the official ChatGPT subscription login:
+dedicated worker. The installer never asks for an API key. After installation, complete the official
+ChatGPT subscription login for Codex and the separate Hermes subscription login if Hermes will be used:
 
 ```powershell
 wsl -d Ubuntu-24.04 -u coco -- codex login
+wsl -d Ubuntu-24.04 -u coco -- hermes auth add openai-codex --type oauth
+wsl -d Ubuntu-24.04 -u coco -- hermes model
 ```
+
+Hermes Agent is also installed and version-recorded by the same WSL bootstrap using the official
+Hermes installer. The installer deliberately does not copy credentials or start a messaging gateway.
+On the target machine, select the ChatGPT/Codex subscription route in the Hermes model picker; do
+not configure `OPENAI_API_KEY` or a paid fallback. If Telegram control is wanted, configure its bot token locally with
+`hermes setup gateway`, then install and start exactly one gateway with `hermes gateway install`
+and `hermes gateway start`. Do not run another Hermes gateway for the same Telegram bot on the Mac.
+Hermes and Codex store their authentication under their respective user homes, outside the checkout.
 
 ### Theia IDE (First Vertical Slice)
 

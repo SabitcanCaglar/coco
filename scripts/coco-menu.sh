@@ -24,7 +24,7 @@ header() {
       ( ==  ^  == )     COCO CONTROL CENTER
 
   Pi / OMP uzun kosulu coding harness
-  Qwen Coder · GLM Flash · DeepSeek · Chromium
+  GLM 5.3 · DeepSeek V4 · Chromium
 
 EOF
 }
@@ -49,10 +49,11 @@ show_models() {
   cat <<'EOF'
 Model rolleri
 
-  Ana kodlama     Qwen3 Coder Next
-  Hizli / ucuz    GLM 5.3 Flash
-  Zor problemler  DeepSeek V3.2
-  Son yedek       Kimi K2.5
+  Ana + plan      GLM 5.3
+  Ucuz yardimci   DeepSeek V4.1 Flash
+  Zor inceleme    DeepSeek V4 Pro
+  Kod yedegi      Qwen3 Coder Next
+  Ek yedek        Kimi K2.5
   Ucretsiz yedek  Step 3.5 Flash Free
 
 Model gecisleri ve hata durumundaki fallback otomatik yonetilir.

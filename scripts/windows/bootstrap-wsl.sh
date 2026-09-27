@@ -18,10 +18,6 @@ done
 [[ "$BRANCH" =~ ^[A-Za-z0-9._/-]+$ ]] || { echo 'Unsafe branch.' >&2; exit 2; }
 
 export DEBIAN_FRONTEND=noninteractive
-if [[ -n "${OPENAI_API_KEY:-}" || -n "${OPENROUTER_API_KEY:-}" ]]; then
-  echo 'Paid API credentials are present. Unset them before a Pro-only installation.' >&2
-  exit 1
-fi
 base_packages=(ca-certificates curl git jq ripgrep xz-utils build-essential python3 python3-venv)
 missing_packages=()
 for package_name in "${base_packages[@]}"; do
@@ -92,6 +88,22 @@ else
   echo 'skip Codex CLI is already installed'
 fi
 export PATH="$HOME/.local/bin:$HOME/.codex/bin:$PATH"
+
+# Hermes is provisioned with the worker, but account credentials and Telegram tokens
+# remain a one-time interactive, per-machine setup and are never copied from this repo.
+if command -v hermes >/dev/null 2>&1; then
+  echo "skip Hermes Agent is already installed: $(hermes --version 2>/dev/null || echo installed)"
+else
+  echo 'install Hermes Agent using the official installer'
+  curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
+fi
+export PATH="$HOME/.local/bin:$HOME/.local/share/hermes/bin:$HOME/.hermes/bin:$PATH"
+if ! command -v hermes >/dev/null 2>&1; then
+  echo 'Hermes installer completed but hermes is not on PATH.' >&2
+  exit 1
+fi
+echo "Hermes Agent: $(hermes --version 2>/dev/null || echo installed)"
+
 mkdir -p "$HOME/.codex"
 if [[ ! -f "$HOME/.codex/config.toml" ]]; then
   cat >"$HOME/.codex/config.toml" <<'EOF'
@@ -154,7 +166,8 @@ jq -n \
   --arg head "$(git rev-parse HEAD)" \
   --arg node "$(node --version)" \
   --arg pnpm "$(pnpm --version)" \
-  '{installedAt:$installedAt,repoRoot:$repoRoot,branch:$branch,head:$head,node:$node,pnpm:$pnpm,headless:true}' \
+  --arg hermes "$(hermes --version 2>/dev/null || echo installed)" \
+  '{installedAt:$installedAt,repoRoot:$repoRoot,branch:$branch,head:$head,node:$node,pnpm:$pnpm,hermes:$hermes,headless:true}' \
   >"$HOME/.local/state/coco/install-report.json"
 
 echo "Coco headless worker installed at $REPO_ROOT"
