@@ -1,0 +1,14 @@
+{
+  "projects": [
+    {
+      "slug": "coco",
+      "path": ".",
+      "enabled": true
+    },
+    {
+      "slug": "another-project",
+      "path": "../another-project",
+      "enabled": true
+    }
+  ]
+}

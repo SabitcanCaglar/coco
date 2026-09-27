@@ -1,41 +1,120 @@
-version: "3.9"
-
 services:
-  # ── PostgreSQL — metadata, task queue, examination results ──
   postgres:
-    image: pgvector/pgvector:pg16
+    image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: coco
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD?Set POSTGRES_PASSWORD in .env}
-      POSTGRES_DB: coco
+      POSTGRES_DB: ${POSTGRES_DB:-coco}
+      POSTGRES_USER: ${POSTGRES_USER:-coco}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-coco-dev-password}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-coco} -d ${POSTGRES_DB:-coco}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
     ports:
       - "5432:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U coco"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
 
-  # ── Redis — task queue, pub/sub, worker state ──
-  redis:
-    image: redis:7-alpine
+  langgraph-control-plane:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.langgraph-control-plane
     restart: unless-stopped
-    command: redis-server --appendonly yes
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      LANGGRAPH_CONTROL_PORT: 4100
+      LANGGRAPH_CONTROL_DATABASE_URL: postgresql://${POSTGRES_USER:-coco}:${POSTGRES_PASSWORD:-coco-dev-password}@postgres:5432/${POSTGRES_DB:-coco}
+      COCO_ORCHESTRATOR_URL: http://orchestrator:3000
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      COCO_OPENROUTER_MODEL: ${COCO_OPENROUTER_MODEL:-stepfun/step-3.5-flash:free}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
     volumes:
-      - redis_data:/data
+      - ${HOME}:/host-home:ro
+      - ..:/workspace:ro
     ports:
-      - "6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
+      - "4100:4100"
 
-  # ── Ollama — local LLM, embedding ──
+  chat-gateway:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.chat-gateway
+    restart: unless-stopped
+    depends_on:
+      langgraph-control-plane:
+        condition: service_started
+    environment:
+      PORT: 4200
+      COCO_LANGGRAPH_URL: http://langgraph-control-plane:4100
+    ports:
+      - "4200:4200"
+
+  orchestrator:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.orchestrator
+    restart: unless-stopped
+    depends_on:
+      langgraph-control-plane:
+        condition: service_started
+      chat-gateway:
+        condition: service_started
+    environment:
+      COCO_BIND_HOST: 0.0.0.0
+      COCO_HOME: /data
+      COCO_MAX_CONCURRENCY: ${COCO_MAX_CONCURRENCY:-4}
+      OLLAMA_URL: http://ollama:11434
+      COCO_LANGGRAPH_URL: http://langgraph-control-plane:4100
+      COCO_CHAT_GATEWAY_URL: http://chat-gateway:4200
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      COCO_OPENROUTER_MODEL: ${COCO_OPENROUTER_MODEL:-stepfun/step-3.5-flash:free}
+      COCO_GIT_USER_NAME: ${COCO_GIT_USER_NAME:-}
+      COCO_GIT_USER_EMAIL: ${COCO_GIT_USER_EMAIL:-}
+      NODE_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - ../.docker-data/orchestrator:/data
+      - ${HOME}:/host-home
+      - ..:/workspace
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "3000:3000"
+
+  telegram-bot:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.telegram
+    restart: unless-stopped
+    depends_on:
+      orchestrator:
+        condition: service_started
+      chat-gateway:
+        condition: service_started
+    environment:
+      COCO_DAEMON_URL: http://orchestrator:3000
+      COCO_CHAT_GATEWAY_URL: http://chat-gateway:4200
+      COCO_ENV_FILE: /workspace/.env
+      COCO_HOME: /data
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_ALLOWED_CHAT_IDS: ${TELEGRAM_ALLOWED_CHAT_IDS:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      COCO_OPENROUTER_MODEL: ${COCO_OPENROUTER_MODEL:-stepfun/step-3.5-flash:free}
+      COCO_GIT_USER_NAME: ${COCO_GIT_USER_NAME:-}
+      COCO_GIT_USER_EMAIL: ${COCO_GIT_USER_EMAIL:-}
+      COCO_MAX_CONCURRENCY: ${COCO_MAX_CONCURRENCY:-4}
+    volumes:
+      - ../.docker-data/telegram:/data
+      - ..:/workspace:ro
+      - ${HOME}:/host-home:ro
+    profiles:
+      - bot
+
   ollama:
     image: ollama/ollama:latest
     restart: unless-stopped
@@ -46,91 +125,14 @@ services:
     environment:
       OLLAMA_KEEP_ALIVE: "24h"
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:11434/api/tags || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:11434/api/tags >/dev/null 2>&1 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 12
       start_period: 30s
-
-  # ── Ollama model puller — on startup pull required models ──
-  ollama-init:
-    image: ollama/ollama:latest
-    depends_on:
-      ollama:
-        condition: service_healthy
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        ollama pull deepseek-coder-v2:16b
-        ollama pull nomic-embed-text
-        echo "Models ready."
-    environment:
-      OLLAMA_HOST: http://ollama:11434
-    restart: "no"
-
-  # ── Orchestrator — task routing, worker dispatch ──
-  orchestrator:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.orchestrator
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    environment:
-      DATABASE_URL: postgresql://coco:${POSTGRES_PASSWORD?Set POSTGRES_PASSWORD in .env}@postgres:5432/coco
-      REDIS_URL: redis://redis:6379
-      OLLAMA_URL: http://ollama:11434
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      LLM_PROVIDER: ${LLM_PROVIDER:-auto}
-      NODE_ENV: production
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - projects_data:/projects
-    ports:
-      - "3000:3000"
-
-  # ── Worker template — scaled per project ──
-  worker:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.worker
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    environment:
-      DATABASE_URL: postgresql://coco:${POSTGRES_PASSWORD?Set POSTGRES_PASSWORD in .env}@postgres:5432/coco
-      REDIS_URL: redis://redis:6379
-      OLLAMA_URL: http://ollama:11434
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      LLM_PROVIDER: ${LLM_PROVIDER:-auto}
-      NODE_ENV: production
-    volumes:
-      - projects_data:/projects
-    deploy:
-      replicas: 2
-
-  # ── Adminer — DB UI (dev only) ──
-  adminer:
-    image: adminer:latest
-    restart: unless-stopped
-    depends_on:
-      - postgres
-    ports:
-      - "8080:8080"
     profiles:
-      - dev
+      - ollama
 
 volumes:
   postgres_data:
-  redis_data:
   ollama_data:
-  projects_data:

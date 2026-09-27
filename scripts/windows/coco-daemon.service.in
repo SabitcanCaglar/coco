@@ -1,0 +1,18 @@
+[Unit]
+Description=Coco local orchestrator
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@@USER@@
+WorkingDirectory=@@REPO_ROOT@@
+Environment=HOME=@@HOME@@
+Environment=PATH=@@HOME@@/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=COCO_HOME=@@HOME@@/.local/state/coco
+ExecStart=@@HOME@@/.local/bin/pnpm --filter @coco/cli exec coco daemon start --parallel 4
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

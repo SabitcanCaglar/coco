@@ -10,10 +10,19 @@
   "exclude": ["dist", "node_modules"],
   "references": [
     {
+      "path": "../openclaw-supervisor"
+    },
+    {
+      "path": "../openclaw-agent"
+    },
+    {
       "path": "../core"
     },
     {
       "path": "../doctor"
+    },
+    {
+      "path": "../llm"
     },
     {
       "path": "../loop"

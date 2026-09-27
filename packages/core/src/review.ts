@@ -1,11 +1,11 @@
 import type { CocoId, ISO8601Timestamp, Severity } from './shared.js'
+import type { ReviewDecision } from './task.js'
 
 export const REVIEW_CHECK_KINDS = ['lint', 'test', 'build', 'diff', 'policy'] as const
 
 export type ReviewCheckKind = (typeof REVIEW_CHECK_KINDS)[number]
 
 export type ReviewOutcome = 'pass' | 'fail' | 'needs-approval'
-
 export interface ReviewCommandDiscovery {
   build: string | null
   test: string | null
@@ -43,6 +43,10 @@ export interface ReviewViolation {
 export interface ReviewReport {
   generatedAt: ISO8601Timestamp
   outcome: ReviewOutcome
+  decision?: ReviewDecision
+  milestone?: string
+  nextMilestone?: string
+  summary?: string
   policy?: ReviewPolicy
   results: ReviewCheckResult[]
   violations: ReviewViolation[]

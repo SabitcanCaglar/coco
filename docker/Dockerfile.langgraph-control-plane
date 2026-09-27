@@ -1,0 +1,17 @@
+FROM python:3.12-alpine
+
+WORKDIR /app
+
+RUN apk add --no-cache curl
+
+COPY services/langgraph_control_plane/requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY services/langgraph_control_plane ./services/langgraph_control_plane
+
+EXPOSE 4100
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=10s \
+  CMD curl -fsS http://127.0.0.1:4100/health || exit 1
+
+CMD ["python", "services/langgraph_control_plane/app.py"]

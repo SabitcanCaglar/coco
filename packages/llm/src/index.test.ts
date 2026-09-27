@@ -1,3 +1,7 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -5,7 +9,10 @@ import {
   LLMRegistry,
   NullProvider,
   OllamaProvider,
+  OpenRouterProvider,
+  listLLMPlugins,
   llmPackage,
+  loadLLMProviderPlugins,
 } from './index.js'
 
 describe('@coco/llm', () => {
@@ -18,8 +25,11 @@ describe('@coco/llm', () => {
     expect(new OllamaProvider().name).toBe('ollama')
     expect(new AnthropicProvider().name).toBe('anthropic')
     expect(new NullProvider().name).toBe('null')
-    const registry = new LLMRegistry()
+    const registry = new LLMRegistry([new NullProvider(), new OllamaProvider()])
     expect(registry.list()).toEqual(['null', 'ollama'])
+    expect(listLLMPlugins().map((plugin) => plugin.provider.name)).toEqual(
+      expect.arrayContaining(['null', 'ollama']),
+    )
     await expect(registry.resolve({ provider: 'null' })).resolves.toMatchObject({
       provider: 'null',
     })
@@ -35,6 +45,20 @@ describe('@coco/llm', () => {
     })
   })
 
+  it('resolves explicit openclaw requests through openrouter when configured', async () => {
+    const registry = new LLMRegistry([
+      new NullProvider(),
+      new OpenRouterProvider('test-key', 'https://openrouter.example/api/v1', 'moonshotai/kimi-k2'),
+    ])
+
+    await expect(
+      registry.resolve({ provider: 'openclaw', model: 'moonshotai/kimi-k2' }),
+    ).resolves.toMatchObject({
+      provider: 'openclaw',
+      model: 'moonshotai/kimi-k2',
+    })
+  })
+
   it('null provider declines generation without throwing', async () => {
     const response = await new NullProvider().generate({
       messages: [{ role: 'user', content: 'hello' }],
@@ -43,5 +67,96 @@ describe('@coco/llm', () => {
 
     expect(response.finishReason).toBe('error')
     expect(response.content).toContain('llm-unavailable')
+  })
+
+  it('retries OpenRouter requests without json mode when the model rejects json_object', async () => {
+    const originalFetch = globalThis.fetch
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            error: {
+              message: 'Provider returned error',
+              code: 405,
+              metadata: {
+                raw: '{"detail":"json_object response format is not supported for model"}',
+              },
+            },
+          }),
+          { status: 405, headers: { 'content-type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            choices: [
+              { message: { content: '{"reply":"merhaba","queue":"none"}' }, finish_reason: 'stop' },
+            ],
+            usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+      )
+
+    globalThis.fetch = fetchMock as typeof fetch
+    try {
+      const provider = new OpenRouterProvider(
+        'test-key',
+        'https://openrouter.example/api/v1',
+        'stepfun/step-3.5-flash',
+      )
+      const response = await provider.generate({
+        systemPrompt: 'Return strict JSON only.',
+        messages: [{ role: 'user', content: 'hello' }],
+        responseFormat: 'json',
+      })
+
+      expect(response.finishReason).toBe('stop')
+      expect(response.content).toContain('"reply":"merhaba"')
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+
+      const firstBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body ?? '{}')) as {
+        response_format?: unknown
+      }
+      const secondBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body ?? '{}')) as {
+        response_format?: unknown
+      }
+      expect(firstBody.response_format).toEqual({ type: 'json_object' })
+      expect(secondBody.response_format).toBeUndefined()
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('loads external provider plugins from file paths', async () => {
+    const pluginDir = await mkdtemp(join(tmpdir(), 'coco-llm-plugin-'))
+    const pluginPath = join(pluginDir, 'provider.mjs')
+    await writeFile(
+      pluginPath,
+      `export const plugin = {
+        manifest: {
+          name: 'external-llm-plugin',
+          version: '0.1.0',
+          kind: 'llm-provider',
+          capabilities: ['llm-generate']
+        },
+        provider: {
+          name: 'external',
+          models: [{ provider: 'external', name: 'ext-1', family: 'ext', supportsJson: true, supportsTools: false }],
+          async generate() {
+            return { model: this.models[0], content: 'ok', finishReason: 'stop' };
+          }
+        }
+      };`,
+    )
+
+    try {
+      const plugins = await loadLLMProviderPlugins([pluginPath])
+      expect(plugins).toHaveLength(1)
+      expect(plugins[0]?.provider.name).toBe('external')
+    } finally {
+      await rm(pluginDir, { recursive: true, force: true })
+    }
   })
 })

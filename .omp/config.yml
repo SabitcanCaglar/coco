@@ -1,0 +1,109 @@
+modelRoleStorage: project
+modelRoles:
+  default: openrouter/z-ai/glm-5.3
+  smol: openrouter/deepseek/deepseek-v4.1-flash
+  slow: openrouter/deepseek/deepseek-v4-pro-0813
+  plan: openrouter/z-ai/glm-5.3
+  advisor: openrouter/z-ai/glm-5.3
+
+enabledProviders:
+  - openrouter
+enabledModels:
+  - openrouter/z-ai/glm-5.3
+  - openrouter/deepseek/deepseek-v4.1-flash
+  - openrouter/deepseek/deepseek-v4-flash-0731
+  - openrouter/deepseek/deepseek-v4-pro-0813
+  - openrouter/qwen/qwen3-coder-next
+  - openrouter/z-ai/glm-5.3-flash
+  - openrouter/deepseek/deepseek-v3.2
+  - openrouter/moonshotai/kimi-k2.5
+  - openrouter/qwen/qwen3-coder-flash
+  - openrouter/stepfun/step-3.5-flash:free
+
+modelProviderOrder:
+  - openrouter
+
+retry:
+  enabled: true
+  maxRetries: 6
+  baseDelayMs: 750
+  maxDelayMs: 120000
+  modelFallback: true
+  fallbackRevertPolicy: cooldown-expiry
+  fallbackChains:
+    default:
+      - openrouter/qwen/qwen3-coder-next
+      - openrouter/deepseek/deepseek-v4-pro-0813
+      - openrouter/moonshotai/kimi-k2.5
+    plan:
+      - openrouter/deepseek/deepseek-v4-pro-0813
+      - openrouter/qwen/qwen3-coder-next
+    slow:
+      - openrouter/z-ai/glm-5.3
+      - openrouter/qwen/qwen3-coder-next
+    smol:
+      - openrouter/deepseek/deepseek-v4-flash-0731
+      - openrouter/stepfun/step-3.5-flash:free
+    openrouter/z-ai/glm-5.3:
+      - openrouter/deepseek/deepseek-v4-pro-0813
+      - openrouter/qwen/qwen3-coder-next
+
+prewalk:
+  enabled: true
+
+advisor:
+  enabled: false
+
+compaction:
+  enabled: true
+  midTurnEnabled: true
+  thresholdPercent: 75
+  asyncEnabled: true
+  handoffSaveToDisk: true
+  keepRecentTokens: 24000
+  autoContinue: true
+  supersedeReads: true
+  dropUseless: true
+
+memory:
+  backend: local
+
+checkpoint:
+  enabled: true
+
+browser:
+  enabled: true
+  headless: true
+  freezeOnTurnEnd: true
+  idleCloseSec: 1800
+  screenshotDir: .runtime/omp/screenshots
+
+github:
+  enabled: true
+
+security:
+  enabled: true
+
+tools:
+  approvalMode: write
+
+task:
+  eager: preferred
+  batch: true
+  enableEffort: true
+  maxConcurrency: 4
+  enableLsp: true
+  maxRecursionDepth: 1
+  maxRuntimeMs: 3600000
+  agentIdleTtlMs: 420000
+  softRequestBudget: 150
+  maxEffort: high
+  isolation:
+    enabled: true
+    apply: true
+    merge: patch
+    commits: generic
+
+worktree:
+  clone: true
+  cleanSource: false

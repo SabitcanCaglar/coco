@@ -1,12 +1,16 @@
 import { randomUUID } from 'node:crypto'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { readdir } from 'node:fs/promises'
 import { basename, extname, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 import type {
+  CocoPluginModule,
   Diagnosis,
   DoctorFinding,
   DoctorReport,
+  FrameworkExpertPlugin,
+  FrameworkExpertPluginDefinition,
   Observation,
   PatchPlan,
   Prescription,
@@ -14,6 +18,7 @@ import type {
   RepoRef,
   Severity,
 } from '@coco/core'
+import { resolvePluginEntrypoints, validatePluginModule } from '@coco/core'
 import { observeProject } from '@coco/loop'
 
 export interface DoctorRuntimeOptions {
@@ -25,16 +30,10 @@ export interface FrameworkExpertContext {
   observation: Observation
 }
 
-export interface FrameworkExpertDefinition {
-  framework: string
-  name: string
-  description?: string
-  detect(context: FrameworkExpertContext): boolean
-  find(context: FrameworkExpertContext): DoctorFinding[]
-  prescribe(context: FrameworkExpertContext, findings: DoctorFinding[]): Prescription[]
-}
+export interface FrameworkExpertDefinition extends FrameworkExpertPluginDefinition {}
 
 export const expertRegistry: FrameworkExpertDefinition[] = []
+const builtinPluginRegistry = new Map<string, FrameworkExpertPlugin>()
 
 export function defineFrameworkExpert(
   definition: FrameworkExpertDefinition,
@@ -92,6 +91,57 @@ function makePrescription(
   return prescription
 }
 
+function buildConsoleLogPatchPlan(
+  repo: RepoRef,
+  finding: DoctorFinding,
+  priority: Priority,
+): PatchPlan | undefined {
+  const operations = finding.targetFiles
+    .map((relativePath) => {
+      const absolutePath = join(repo.rootPath, relativePath)
+      const content = readFileSync(absolutePath, 'utf-8')
+      const nextContent = content
+        .split('\n')
+        .filter(
+          (line: string) => !line.includes('console.log(') && !line.includes('console.debug('),
+        )
+        .join('\n')
+
+      if (nextContent === content) {
+        return null
+      }
+
+      return {
+        path: relativePath,
+        operation: 'update' as const,
+        format: 'full-file' as const,
+        summary: 'Remove console logging statements from source.',
+        content: nextContent,
+      }
+    })
+    .filter((operation): operation is NonNullable<typeof operation> => Boolean(operation))
+
+  if (operations.length === 0) {
+    return undefined
+  }
+
+  return {
+    id: randomUUID(),
+    title: 'Remove console logging statements',
+    description: 'Apply a safe single-file cleanup that removes console logging from source files.',
+    rationale: finding.summary,
+    targetFiles: finding.targetFiles,
+    expectedScoreDelta: 2,
+    priority,
+    operations,
+    safetyChecks: [
+      'Require target paths to stay within the repository root.',
+      'Only allow update operations for existing source files.',
+      'Review resulting diff before applying to the main branch.',
+    ],
+  }
+}
+
 defineFrameworkExpert({
   framework: 'node-typescript',
   name: 'Node/TypeScript Expert',
@@ -110,7 +160,7 @@ defineFrameworkExpert({
           observation.files
             .filter((file) => file.metrics.consoleLogs > 0)
             .map((file) => file.relativePath),
-          ['node', 'typescript', 'maintainability'],
+          ['node', 'typescript', 'node-typescript', 'maintainability'],
         ),
       )
     }
@@ -125,7 +175,7 @@ defineFrameworkExpert({
           observation.files
             .filter((file) => file.metrics.lineCount > 200)
             .map((file) => file.relativePath),
-          ['node', 'typescript', 'size'],
+          ['node', 'typescript', 'node-typescript', 'size'],
         ),
       )
     }
@@ -133,16 +183,47 @@ defineFrameworkExpert({
     return findings
   },
   prescribe: (_context, findings) =>
-    findings.map((finding) =>
-      makePrescription(
+    findings.map((finding) => {
+      const priority = finding.severity === 'medium' ? 'high' : 'medium'
+      const patchPlan = buildConsoleLogPatchPlan(_context.repo, finding, priority)
+      return makePrescription(
         finding.title,
         finding.summary,
-        finding.severity === 'medium' ? 'high' : 'medium',
-        'experiment',
+        priority,
+        patchPlan ? 'autofix' : 'experiment',
         finding.targetFiles,
-      ),
-    ),
+        patchPlan,
+      )
+    }),
 })
+
+export async function loadFrameworkExpertPlugins(
+  pluginPaths: string[],
+): Promise<FrameworkExpertPlugin[]> {
+  const loaded: FrameworkExpertPlugin[] = []
+  for (const pluginPath of await resolvePluginEntrypoints(pluginPaths)) {
+    const module = (await import(pathToFileURL(pluginPath).href)) as {
+      default?: CocoPluginModule
+      plugin?: CocoPluginModule
+    }
+    const plugin = module.plugin ?? module.default
+    if (!plugin || plugin.manifest.kind !== 'framework-expert') {
+      continue
+    }
+    const validation = validatePluginModule(plugin)
+    if (!validation.valid) {
+      throw new Error(
+        `Invalid framework expert plugin at ${pluginPath}: ${validation.errors.join(' ')}`,
+      )
+    }
+    loaded.push(plugin as FrameworkExpertPlugin)
+  }
+  return loaded
+}
+
+export function listDoctorPlugins(): FrameworkExpertPlugin[] {
+  return [...builtinPluginRegistry.values()]
+}
 
 defineFrameworkExpert({
   framework: 'docker',
@@ -224,6 +305,60 @@ defineFrameworkExpert({
     ),
 })
 
+function registerBuiltinPlugin(plugin: FrameworkExpertPlugin): void {
+  builtinPluginRegistry.set(plugin.manifest.name, plugin)
+}
+
+function requireBuiltinExpert(framework: string): FrameworkExpertDefinition {
+  const expert = expertRegistry.find((candidate) => candidate.framework === framework)
+  if (!expert) {
+    throw new Error(`Missing built-in doctor expert for framework "${framework}".`)
+  }
+  return expert
+}
+
+function builtInDoctorPlugins(): FrameworkExpertPlugin[] {
+  return [
+    {
+      manifest: {
+        name: '@coco/plugin-node-typescript',
+        version: '0.1.0',
+        kind: 'framework-expert',
+        source: 'builtin',
+        capabilities: ['framework-detect', 'doctor-findings', 'doctor-prescriptions'],
+        description: 'Node and TypeScript repository expert.',
+      },
+      expert: requireBuiltinExpert('node-typescript'),
+    },
+    {
+      manifest: {
+        name: '@coco/plugin-docker',
+        version: '0.1.0',
+        kind: 'framework-expert',
+        source: 'builtin',
+        capabilities: ['framework-detect', 'doctor-findings', 'security-hygiene'],
+        description: 'Docker repository expert.',
+      },
+      expert: requireBuiltinExpert('docker'),
+    },
+    {
+      manifest: {
+        name: '@coco/plugin-repo-hygiene',
+        version: '0.1.0',
+        kind: 'framework-expert',
+        source: 'builtin',
+        capabilities: ['doctor-findings', 'doctor-prescriptions', 'diagnosis'],
+        description: 'Generic repository hygiene expert.',
+      },
+      expert: requireBuiltinExpert('repo-hygiene'),
+    },
+  ]
+}
+
+for (const plugin of builtInDoctorPlugins()) {
+  registerBuiltinPlugin(plugin)
+}
+
 async function detectLanguageHints(rootPath: string): Promise<string[]> {
   const hints = new Set<string>()
   const entries = await readdir(rootPath, { withFileTypes: true }).catch(() => [])
@@ -233,6 +368,24 @@ async function detectLanguageHints(rootPath: string): Promise<string[]> {
     const extension = extname(entry.name).replace('.', '')
     if (extension) hints.add(extension)
     if (basename(entry.name) === 'Dockerfile') hints.add('docker')
+  }
+  return [...hints].sort()
+}
+
+function detectObservationLanguageHints(files: ReadonlyArray<{ relativePath: string }>): string[] {
+  const hints = new Set<string>()
+  for (const file of files) {
+    const extension = extname(file.relativePath).replace('.', '')
+    if (extension) {
+      hints.add(extension)
+    }
+    if (
+      file.relativePath === 'Dockerfile' ||
+      file.relativePath.startsWith('docker/') ||
+      file.relativePath.includes('/Dockerfile')
+    ) {
+      hints.add('docker')
+    }
   }
   return [...hints].sort()
 }
@@ -270,15 +423,34 @@ function deriveDiagnoses(findings: DoctorFinding[]): Diagnosis[] {
   return diagnoses
 }
 
+export interface DoctorRuntimeConfig {
+  pluginPaths?: string[]
+  experts?: FrameworkExpertDefinition[]
+}
+
 export class DoctorRuntime {
+  private externalExperts: FrameworkExpertDefinition[] | null = null
+
+  constructor(private readonly config: DoctorRuntimeConfig = {}) {}
+
+  private async getExperts(): Promise<FrameworkExpertDefinition[]> {
+    if (this.externalExperts === null) {
+      const plugins = await loadFrameworkExpertPlugins(this.config.pluginPaths ?? [])
+      this.externalExperts = plugins.map((plugin) => plugin.expert)
+    }
+    return [...expertRegistry, ...(this.config.experts ?? []), ...this.externalExperts]
+  }
+
   async examine(repo: RepoRef, _options: DoctorRuntimeOptions = {}): Promise<DoctorReport> {
     const observation = await observeProject(repo.rootPath)
+    const observedHints = detectObservationLanguageHints(observation.fileDetails)
+    const filesystemHints = observedHints.length > 0 ? [] : await detectLanguageHints(repo.rootPath)
     const enrichedRepo: RepoRef = {
       ...repo,
       languageHints:
         repo.languageHints.length > 0
           ? repo.languageHints
-          : await detectLanguageHints(repo.rootPath),
+          : [...new Set([...observedHints, ...filesystemHints])].sort(),
     }
 
     const context: FrameworkExpertContext = {
@@ -312,7 +484,8 @@ export class DoctorRuntime {
       },
     }
 
-    const applicableExperts = expertRegistry.filter((expert) => expert.detect(context))
+    const experts = await this.getExperts()
+    const applicableExperts = experts.filter((expert) => expert.detect(context))
     const findings = applicableExperts.flatMap((expert) => expert.find(context))
     const diagnoses = deriveDiagnoses(findings)
     const prescriptions = applicableExperts.flatMap((expert) => {

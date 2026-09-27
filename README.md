@@ -156,11 +156,11 @@ Three primitives. That's all:
 |-------|---------------|--------|
 | **Karpathy Loop** | observe → hypothesize → experiment → evaluate | **Working** |
 | **Core Contracts** | Pure domain types, scoring model, patch schema, command policy | **Working** |
-| **Doctor Engine** | 8-phase examination: triage → vitals → diagnosis → treatment | Scaffolded |
-| **Orchestrator** | Task queue, worker assignment, capacity management | Scaffolded |
-| **Worker** | Single repo / single branch / single worktree | Scaffolded |
-| **LLM Providers** | Ollama / Claude / OpenAI / NullProvider package boundary | Scaffolded |
-| **Review Gate** | Lint + test + diff review; no merge without approval | Scaffolded |
+| **Doctor Engine** | Local examination runtime with built-in and external framework experts | **Working** |
+| **Orchestrator** | Local SQLite daemon, repo registry, queue, and worker dispatch | **Working** |
+| **Worker** | Single repo / single branch / single worktree review-first execution | **Working** |
+| **LLM Providers** | Null + Ollama providers with external plugin loading | **Working** |
+| **Review Gate** | Diff + build + test review checks with plugin-backed policy checks | **Working** |
 
 ---
 
@@ -214,6 +214,237 @@ git clone https://github.com/canfamily/coco
 cd coco
 pnpm install
 ```
+
+### OMP long-running coding harness
+
+The repository includes a project-scoped OMP configuration with cost-conscious OpenRouter model routing,
+fallbacks, isolated subagents, checkpoints, context compaction, and Chromium automation.
+
+```bash
+# Interactive terminal session (write/exec actions ask for approval)
+pnpm harness
+
+# Unattended plan -> implement -> test loop, capped at 8 hours
+pnpm harness:long -- "Implement the next PLAN.md milestone and verify it in the browser"
+
+# Resume a saved harness session
+pnpm harness:resume
+
+# Check the local harness installation and model catalog
+pnpm harness:doctor
+```
+
+The default and planning routes use GLM 5.3 (the reasoning model, not Flash) for complex coding work.
+DeepSeek V4.1 Flash is limited to the `smol` helper role; DeepSeek V4 Pro is the slow/deep fallback,
+and Qwen3 Coder Next is the coding fallback. All OpenRouter calls are billed by token. Current listed
+prices are approximately $0.45/M input and $2/M output for GLM 5.3, $0.13/M and $0.52/M for V4.1
+Flash, and $0.66/M and $1.98/M for V4 Pro; provider discounts and effective prices vary. Set
+`OPENROUTER_API_KEY` in the shell or repository `.env` to enable
+these routes. Codex ChatGPT subscription authentication does not provide an OpenRouter balance;
+the OpenRouter key is optional and only needed when using the Pi/OMP China-model route.
+OMP sessions and screenshots are
+stored under `.runtime/omp/`. The long-running command prevents macOS idle sleep, but never pushes,
+merges, publishes, or deploys unless explicitly instructed.
+
+The harness uses Pi/OMP 18.3.2 or newer. Install or update it with
+`npm install -g @oh-my-pi/pi-coding-agent@18.3.2`; `pnpm harness:doctor` checks the installed
+version, model catalog, workspace dependencies, and required tools.
+
+For a command-free launcher on macOS, double-click `Coco.command` in Finder. It opens a terminal
+control menu for starting, resuming, and checking harness runs. The same menu is available with
+`pnpm menu`.
+
+### Local Maintainer Runtime
+
+```bash
+cp .env.example .env
+# paste your OPENROUTER_API_KEY into .env if you want remote coding models
+
+# Register a repo
+pnpm --filter @coco/cli exec coco repo add .
+
+# Register several machine-local checkouts from an ignored manifest
+cp coco.projects.example.json coco.projects.json
+# Edit the paths, then sync and inspect the registry
+pnpm --filter @coco/cli exec coco repos sync coco.projects.json
+pnpm --filter @coco/cli exec coco repos --json
+
+# Create one session with explicit project roots (repeat --repo-root as needed)
+pnpm --filter @coco/cli exec coco session create "Coordinate projects" \
+  --repo-root ../repo-a --repo-root ../repo-b --json
+
+# Run a doctor exam directly or through the local daemon
+pnpm --filter @coco/cli exec coco doctor run . --json
+
+# Run one review-first loop experiment
+pnpm --filter @coco/cli exec coco loop run . --rounds 1 --provider null --json
+
+# Run one remote OpenRouter/OpenClaw experiment with StepFun Step 3.5 Flash Free
+pnpm --filter @coco/cli exec coco loop run . \
+  --rounds 1 \
+  --provider openclaw \
+  --model stepfun/step-3.5-flash:free \
+  --json
+
+# Review the current repo
+pnpm --filter @coco/cli exec coco review run . --json
+
+# Start the loopback-only daemon
+pnpm --filter @coco/cli exec coco daemon start --parallel 4
+
+# Queue multiple repos for unattended background work
+pnpm --filter @coco/cli exec coco loop fanout ../repo-a ../repo-b ../repo-c \
+  --provider openclaw \
+  --model stepfun/step-3.5-flash:free \
+  --json
+
+# Inspect daemon jobs
+pnpm --filter @coco/cli exec coco jobs list --json
+```
+
+### Headless Windows worker
+
+The Windows host can be provisioned as an unattended WSL2 worker. Docker Engine, Node, pnpm,
+Codex CLI, Coco, the systemd daemon, the full quality gate, and a real headless Chromium smoke test
+are installed and verified without opening Docker Desktop or a browser window.
+
+Run this in PowerShell; it elevates through UAC when required:
+
+```powershell
+$u="https://raw.githubusercontent.com/SabitcanCaglar/coco/codex/m6-first-real-fixers/scripts/windows/install.ps1"; $p="$env:TEMP\coco-install.ps1"; Invoke-WebRequest $u -OutFile $p; powershell -NoProfile -ExecutionPolicy Bypass -File $p
+```
+
+If Windows enables WSL features for the first time, restart once and run the same command again.
+The installer is idempotent: it detects and skips compatible WSL, Ubuntu, Docker Engine/Compose,
+Node 24, pnpm, Codex CLI, and Playwright Chromium installations. It still updates the clean Coco
+checkout and reruns verification, and it refuses to overwrite a dirty checkout. Its log is stored under
+`C:\ProgramData\Coco\bootstrap`; the canonical checkout lives at `/home/coco/projects/coco` inside
+WSL, not under `/mnt/c`.
+
+The dedicated `coco` WSL account is intentionally configured for unattended full access
+(`NOPASSWD` sudo, Codex approval policy `never`, sandbox `danger-full-access`). Use this only on the
+dedicated worker. The installer never asks for an API key. After installation, complete the official
+ChatGPT subscription login for Codex and the separate Hermes subscription login if Hermes will be used:
+
+```powershell
+wsl -d Ubuntu-24.04 -u coco -- codex login
+wsl -d Ubuntu-24.04 -u coco -- hermes auth add openai-codex --type oauth
+wsl -d Ubuntu-24.04 -u coco -- hermes model
+```
+
+Hermes Agent is also installed and version-recorded by the same WSL bootstrap using the official
+Hermes installer. The installer deliberately does not copy credentials or start a messaging gateway.
+On the target machine, select the ChatGPT/Codex subscription route in the Hermes model picker; do
+not configure `OPENAI_API_KEY` or a paid fallback. If Telegram control is wanted, configure its bot token locally with
+`hermes setup gateway`, then install and start exactly one gateway with `hermes gateway install`
+and `hermes gateway start`. Do not run another Hermes gateway for the same Telegram bot on the Mac.
+Hermes and Codex store their authentication under their respective user homes, outside the checkout.
+
+### Theia IDE (First Vertical Slice)
+
+`coco` now includes the first Theia-facing packages for the medium-term OSS IDE direction:
+
+- `@coco/theia` — shared Theia extension package with:
+  - `OpenClaw Chat` view
+  - `Task Monitor` view
+  - shared workbench blueprint helpers
+- `@coco/theia-browser-app` — browser app manifest that can host the Coco Theia extension
+
+Current goal of this slice:
+- reuse the shared OpenClaw supervisor
+- surface live `/tasks`, `/workers`, and `/sessions` in a proper IDE shell
+- keep chat, monitoring, and code editing in one open-source workbench
+
+Useful commands:
+
+```bash
+# Build the shared Theia extension package
+pnpm --filter @coco/theia build
+
+# Bundle the browser app shell
+pnpm theia:bundle
+
+# Start Coco IDE on http://127.0.0.1:3001
+pnpm theia:start
+```
+
+This is the first IDE slice, not the final product. It gives us the shared extension surface
+for chat-first orchestration and monitoring; host-native execution, richer diff/review UX, and
+desktop packaging come next.
+
+### Unattended macOS Background Run
+
+If you want `coco` to keep working while you are away from the keyboard, install the daemon as a `launchd` agent on macOS:
+
+```bash
+cp .env.example .env
+# paste your OPENROUTER_API_KEY into .env
+
+pnpm --filter @coco/cli exec coco daemon install-launchd --parallel 4
+launchctl list | rg coco
+```
+
+You can inspect the generated plist before installing it:
+
+```bash
+pnpm --filter @coco/cli exec coco daemon print-launchd --parallel 4
+```
+
+Notes:
+- The daemon reads `.env` automatically from the working directory, or from `COCO_ENV_FILE` if set.
+- Local background execution still stops if the machine goes to sleep.
+- For true 24/7 unattended coding, run the daemon on an always-on Mac mini, server, or cloud VM.
+
+### Telegram Bot Control
+
+You can drive `coco` remotely from your phone through Telegram. The bot talks to the local daemon and keeps a lightweight per-chat session with:
+
+- active repo
+- default provider
+- default model
+
+Environment:
+
+```bash
+cp .env.example .env
+# paste TELEGRAM_BOT_TOKEN and OPENROUTER_API_KEY into .env
+```
+
+Run locally:
+
+```bash
+pnpm --filter @coco/telegram build
+node packages/telegram/dist/index.js
+```
+
+Key Telegram commands:
+
+```text
+/help
+/repos
+/repoadd /absolute/path/to/repo
+/use repo-name-or-id
+/provider openclaw
+/model stepfun/step-3.5-flash:free
+/repoadd /host-home/Desktop/my-app
+postgres-dev containerini restart et
+/doctor
+/loop
+/fanout repo-a repo-b repo-c
+/jobs
+/job <job-id>
+/session
+```
+
+Docker profile:
+
+```bash
+docker compose --profile bot up -d orchestrator telegram-bot
+```
+
+Recommended:
+- set `TELEGRAM_ALLOWED_CHAT_IDS` to your own chat id(s)
+- keep repos registered on the host first if you prefer not to send absolute paths through Telegram
 
 ### Karpathy Loop (Working Now)
 
@@ -274,6 +505,31 @@ cp .env.example .env
 docker compose up -d
 ```
 
+## Plugin Runtime
+
+`coco` now supports three plugin kinds:
+
+- `framework-expert`
+- `review-check`
+- `llm-provider`
+
+Built-in plugins are always loaded. External plugins can be loaded from one or more files or directories with `COCO_PLUGIN_PATHS`.
+
+```bash
+# Load all plugin modules from the example directory
+export COCO_PLUGIN_PATHS=./examples/plugins
+
+# Inspect what coco sees
+pnpm --filter @coco/cli exec coco plugins list --json
+pnpm --filter @coco/cli exec coco plugins inspect example-doctor-repo-note --json
+
+# External plugins now participate in runtime flows
+pnpm --filter @coco/cli exec coco doctor run . --json
+pnpm --filter @coco/cli exec coco review run . --json
+```
+
+Example plugin modules live in [examples/plugins/doctor-repo-note.mjs](/Users/canfamily/Desktop/coco/examples/plugins/doctor-repo-note.mjs), [examples/plugins/review-policy-note.mjs](/Users/canfamily/Desktop/coco/examples/plugins/review-policy-note.mjs), and [examples/plugins/llm-mock-provider.mjs](/Users/canfamily/Desktop/coco/examples/plugins/llm-mock-provider.mjs).
+
 ---
 
 ## Project Structure
@@ -284,11 +540,13 @@ coco/
     loop/           Karpathy Loop engine (working)
     core/           Pure contracts, scoring, patch, and policy types
     llm/            Provider registry and adapters (scaffolded)
-    doctor/         Doctor engine and framework experts (scaffolded)
-    orchestrator/   Task queue, worker management (scaffolded)
-    worker/         Single-project coding agent (scaffolded)
-    review/         Lint, test, diff review gate (scaffolded)
-    cli/            CLI commands (scaffolded)
+    doctor/         Doctor engine and framework experts
+    orchestrator/   Local daemon, repo registry, and job queue
+    worker/         Single-project review-first coding worker
+    review/         Lint, test, diff, and plugin-backed review gate
+    cli/            CLI commands and plugin inspection
+  examples/
+    plugins/        External plugin examples
   docker/
     compose.yml
     Dockerfile.*

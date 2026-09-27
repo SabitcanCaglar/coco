@@ -32,6 +32,7 @@ export interface ExperimentResult {
   commitHash?: string
   branchName?: string
   worktreePath?: string
+  patchArtifactPath?: string
   error?: string
   patchResult?: PatchResult
 }
